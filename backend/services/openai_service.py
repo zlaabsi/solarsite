@@ -53,8 +53,9 @@ async def analyze_terrain_image(image_bytes: bytes, lat: float, lon: float) -> d
 async def generate_solar_farm_render(prompt: str) -> str:
     client = AsyncOpenAI()
     result = await client.images.generate(
-        model="gpt-image-1",
+        model="gpt-image-1.5",
         prompt=prompt,
+        quality="low",
         size="1792x1024",
     )
     return result.data[0].url

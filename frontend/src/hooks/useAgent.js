@@ -12,7 +12,7 @@ export default function useAgent() {
   const abortRef = useRef(null);
 
   const runAgent = useCallback(
-    async (latitude, longitude, areaHectares = 5.0) => {
+    async (latitude, longitude, areaHectares = 5.0, mode = "test") => {
       setAgentState("running");
       setSteps([]);
       setPolygon(null);
@@ -32,6 +32,7 @@ export default function useAgent() {
             latitude,
             longitude,
             area_hectares: areaHectares,
+            mode,
           }),
           signal: abort.signal,
         });

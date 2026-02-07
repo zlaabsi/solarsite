@@ -5,7 +5,7 @@ from typing import AsyncGenerator
 
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import HumanMessage  # noqa: F401
 from langgraph.prebuilt import create_react_agent
 
 from shapely.geometry import Polygon, box
@@ -20,7 +20,7 @@ from services.shadow_calc import calculate_shadow_matrix
 from services.yield_calc import calculate_yield
 from services.heatmap_gen import generate_seasonal_heatmaps
 from services.openai_service import generate_solar_farm_render
-from services.fal_service import generate_3d_model as fal_generate_3d
+from services.fal_service import generate_3d_test, generate_3d_demo
 
 
 AGENT_SYSTEM_PROMPT = (
@@ -40,7 +40,8 @@ AGENT_SYSTEM_PROMPT = (
 class SolarAgent:
     """Per-request LangGraph agent with shared result storage."""
 
-    def __init__(self):
+    def __init__(self, mode: str = "test"):
+        self.mode = mode  # "test" (SAM $0.02) or "demo" (Hunyuan $0.225)
         self.polygon_data = None
         self.analysis_data = None
         self.model_3d_data = None
@@ -299,8 +300,8 @@ class SolarAgent:
         ) -> str:
             """Generate a 3D model of the solar farm.
 
-            Creates a photorealistic render then converts to 3D GLB model
-            using GPT Image and fal.ai Trellis 2.
+            In test mode: GPT Image render then SAM 3D Objects reconstruction.
+            In demo mode: Hunyuan 3D text-to-3D directly (skips image generation).
 
             Args:
                 n_panels: Number of panels in the farm.
@@ -308,22 +309,34 @@ class SolarAgent:
                 longitude: Site longitude.
 
             Returns:
-                JSON with render image URL and 3D model URLs.
+                JSON with 3D model URLs.
             """
-            prompt = (
-                f"Photorealistic aerial drone photograph of a large ground-mounted "
-                f"solar farm with approximately {n_panels} panels on flat Saharan "
-                f"desert terrain near the Atlantic ocean. "
-                f"Clear blue sky, realistic lighting, high detail."
+            text_prompt = (
+                f"Aerial view of a large ground-mounted solar farm with "
+                f"approximately {n_panels} photovoltaic panels on flat "
+                f"Saharan desert terrain near the Atlantic ocean, "
+                f"clear blue sky, realistic lighting"
             )
-            render_url = await generate_solar_farm_render(prompt)
-            model = await asyncio.to_thread(fal_generate_3d, render_url)
 
-            result = {
-                "render_image_url": render_url,
-                "model_glb_url": model["model_glb_url"],
-                "thumbnail_url": model["thumbnail_url"],
-            }
+            if agent_ref.mode == "demo":
+                model = await asyncio.to_thread(
+                    generate_3d_demo, text_prompt
+                )
+                result = {
+                    "render_image_url": "",
+                    "model_glb_url": model["model_glb_url"],
+                    "thumbnail_url": model["thumbnail_url"],
+                }
+            else:
+                render_url = await generate_solar_farm_render(text_prompt)
+                model = await asyncio.to_thread(
+                    generate_3d_test, render_url
+                )
+                result = {
+                    "render_image_url": render_url,
+                    "model_glb_url": model["model_glb_url"],
+                    "thumbnail_url": model["thumbnail_url"],
+                }
 
             agent_ref.model_3d_data = result
             return json.dumps(result)
@@ -336,6 +349,11 @@ class SolarAgent:
         longitude: float,
         area_hectares: float = 5.0,
     ) -> AsyncGenerator[dict, None]:
+        """Run the agent and yield SSE-compatible event dicts.
+
+        Mode is set at __init__: "test" uses SAM 3D ($0.02),
+        "demo" uses Hunyuan text-to-3D ($0.225).
+        """
         """Run the agent and yield SSE-compatible event dicts."""
         tools = self._make_tools()
 

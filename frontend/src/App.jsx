@@ -25,9 +25,10 @@ export default function App() {
   const [hour, setHour] = useState(12);
   const [month, setMonth] = useState(6);
   const [activeView, setActiveView] = useState("map");
+  const [mode, setMode] = useState("test"); // "test" (SAM) or "demo" (Hunyuan)
 
   const handleLaunchAgent = () => {
-    runAgent(DEFAULT_LAT, DEFAULT_LON, 5.0);
+    runAgent(DEFAULT_LAT, DEFAULT_LON, 5.0, mode);
   };
 
   useEffect(() => {
@@ -104,6 +105,8 @@ export default function App() {
               steps={steps}
               thinking={thinking}
               error={error}
+              mode={mode}
+              onModeChange={setMode}
               onLaunch={handleLaunchAgent}
               onStop={stopAgent}
             />

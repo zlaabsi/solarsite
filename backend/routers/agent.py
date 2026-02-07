@@ -11,11 +11,12 @@ class AgentRunRequest(BaseModel):
     latitude: float = 23.7145
     longitude: float = -15.9369
     area_hectares: float = 5.0
+    mode: str = "test"  # "test" (SAM $0.02) or "demo" (Hunyuan $0.225)
 
 
 @router.post("/api/agent/run")
 async def run_agent(req: AgentRunRequest):
-    agent = SolarAgent()
+    agent = SolarAgent(mode=req.mode)
 
     async def event_stream():
         try:

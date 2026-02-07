@@ -9,17 +9,41 @@ export default function AgentPanel({
   steps,
   thinking,
   error,
+  mode,
+  onModeChange,
   onLaunch,
   onStop,
 }) {
   return (
     <div className="p-4 space-y-4">
       {agentState === "idle" && (
-        <div className="text-center space-y-3">
-          <p className="text-sm text-gray-400">
+        <div className="space-y-3">
+          <p className="text-sm text-gray-400 text-center">
             AI agent will autonomously select a zone, run solar analysis, and
             generate a 3D model.
           </p>
+          <div className="flex rounded-lg overflow-hidden border border-gray-700">
+            <button
+              onClick={() => onModeChange("test")}
+              className={`flex-1 py-2 text-xs font-medium transition ${
+                mode === "test"
+                  ? "bg-gray-700 text-white"
+                  : "bg-transparent text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              Test (SAM $0.02)
+            </button>
+            <button
+              onClick={() => onModeChange("demo")}
+              className={`flex-1 py-2 text-xs font-medium transition ${
+                mode === "demo"
+                  ? "bg-amber-500/20 text-amber-400 border-l border-gray-700"
+                  : "bg-transparent text-gray-500 hover:text-gray-300 border-l border-gray-700"
+              }`}
+            >
+              Demo (Hunyuan $0.22)
+            </button>
+          </div>
           <button
             onClick={onLaunch}
             className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-bold py-3 px-6 rounded-xl shadow-lg transition text-lg"

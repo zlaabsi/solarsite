@@ -101,7 +101,7 @@ class Generate3DRequest(BaseModel):
     latitude: float
     longitude: float
     n_panels: int
-    render_type: Literal["3d_model"] = "3d_model"
+    render_type: Literal["test", "demo"] = "test"
 
 
 class Generate3DResponse(BaseModel):
