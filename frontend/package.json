@@ -1,0 +1,34 @@
+{
+  "name": "solarsite-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-map-gl": "^7.1.7",
+    "maplibre-gl": "^4.7.1",
+    "@deck.gl/core": "^9.1.4",
+    "@deck.gl/layers": "^9.1.4",
+    "@deck.gl/mapbox": "^9.1.4",
+    "@deck.gl/react": "^9.1.4",
+    "@deck.gl/aggregation-layers": "^9.1.4",
+    "@fal-ai/client": "^1.2.1",
+    "@google/model-viewer": "^3.5.0",
+    "lucide-react": "^0.468.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.0.7",
+    "tailwindcss": "^3.4.17",
+    "postcss": "^8.4.49",
+    "autoprefixer": "^10.4.20"
+  }
+}
