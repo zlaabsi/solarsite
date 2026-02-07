@@ -10,7 +10,7 @@ export default function ModelViewer({ glbUrl }) {
   }
 
   return (
-    <div className="rounded-xl overflow-hidden border border-gray-800">
+    <div style={{ width: "100%", height: "100%" }}>
       <model-viewer
         src={glbUrl}
         alt="Solar farm 3D model"
@@ -18,7 +18,7 @@ export default function ModelViewer({ glbUrl }) {
         camera-controls
         shadow-intensity="1"
         environment-image="neutral"
-        style={{ width: "100%", height: "400px", backgroundColor: "#111" }}
+        style={{ width: "100%", height: "100%", backgroundColor: "#111" }}
       />
     </div>
   );

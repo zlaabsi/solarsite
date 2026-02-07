@@ -1,5 +1,7 @@
 import asyncio
 import json
+import uuid
+import logging
 import numpy as np
 from typing import AsyncGenerator
 
@@ -9,6 +11,8 @@ from langchain_core.messages import HumanMessage  # noqa: F401
 from langgraph.prebuilt import create_react_agent
 
 from shapely.geometry import Polygon, box
+
+logger = logging.getLogger(__name__)
 
 from services.solar_engine import (
     get_solar_positions,
@@ -65,42 +69,46 @@ class SolarAgent:
             Returns:
                 JSON with polygon_geojson and zone metadata.
             """
-            area_m2 = area_hectares * 10000
-            side_m = np.sqrt(area_m2)
+            try:
+                area_m2 = area_hectares * 10000
+                side_m = np.sqrt(area_m2)
 
-            lat_scale = 111320
-            lon_scale = 111320 * np.cos(np.radians(latitude))
+                lat_scale = 111320
+                lon_scale = 111320 * np.cos(np.radians(latitude))
 
-            half_lat = (side_m / 2) / lat_scale
-            half_lon = (side_m / 2) / lon_scale
+                half_lat = (side_m / 2) / lat_scale
+                half_lon = (side_m / 2) / lon_scale
 
-            rect = box(
-                longitude - half_lon,
-                latitude - half_lat,
-                longitude + half_lon,
-                latitude + half_lat,
-            )
-            coords = list(rect.exterior.coords)
+                rect = box(
+                    longitude - half_lon,
+                    latitude - half_lat,
+                    longitude + half_lon,
+                    latitude + half_lat,
+                )
+                coords = list(rect.exterior.coords)
 
-            polygon_geojson = {
-                "type": "Polygon",
-                "coordinates": [coords],
-            }
-
-            agent_ref.polygon_data = polygon_geojson
-
-            return json.dumps(
-                {
-                    "polygon_geojson": polygon_geojson,
-                    "area_hectares": area_hectares,
-                    "area_m2": area_m2,
-                    "center": {"latitude": latitude, "longitude": longitude},
-                    "dimensions_m": {
-                        "width": round(side_m, 1),
-                        "height": round(side_m, 1),
-                    },
+                polygon_geojson = {
+                    "type": "Polygon",
+                    "coordinates": [coords],
                 }
-            )
+
+                agent_ref.polygon_data = polygon_geojson
+
+                return json.dumps(
+                    {
+                        "polygon_geojson": polygon_geojson,
+                        "area_hectares": area_hectares,
+                        "area_m2": area_m2,
+                        "center": {"latitude": latitude, "longitude": longitude},
+                        "dimensions_m": {
+                            "width": round(side_m, 1),
+                            "height": round(side_m, 1),
+                        },
+                    }
+                )
+            except Exception as e:
+                logger.error(f"select_zone failed: {e}")
+                return json.dumps({"error": str(e)})
 
         @tool
         def run_solar_analysis(
@@ -135,162 +143,166 @@ class SolarAgent:
             Returns:
                 JSON with key performance indicators.
             """
-            polygon = Polygon(polygon_coordinates)
+            try:
+                polygon = Polygon(polygon_coordinates)
 
-            solpos = get_solar_positions(latitude, longitude)
-            pvgis_data, meta = get_pvgis_hourly(latitude, longitude)
-            tilted_data, _ = get_tilted_irradiance(
-                latitude, longitude, panel_tilt_deg, panel_azimuth_deg
-            )
+                solpos = get_solar_positions(latitude, longitude)
+                pvgis_data, meta = get_pvgis_hourly(latitude, longitude)
+                tilted_data, _ = get_tilted_irradiance(
+                    latitude, longitude, panel_tilt_deg, panel_azimuth_deg
+                )
 
-            layout = generate_panel_layout(
-                zone_polygon=polygon,
-                module_width_m=module_width_m,
-                module_height_m=module_height_m,
-                row_spacing_m=row_spacing_m,
-                panel_azimuth_deg=panel_azimuth_deg,
-                latitude=latitude,
-                longitude=longitude,
-            )
+                layout = generate_panel_layout(
+                    zone_polygon=polygon,
+                    module_width_m=module_width_m,
+                    module_height_m=module_height_m,
+                    row_spacing_m=row_spacing_m,
+                    panel_azimuth_deg=panel_azimuth_deg,
+                    latitude=latitude,
+                    longitude=longitude,
+                )
 
-            n_rows = layout["properties"]["n_rows"]
-            shadow_matrix = calculate_shadow_matrix(
-                solpos=solpos,
-                panel_height_m=module_height_m,
-                panel_tilt_deg=panel_tilt_deg,
-                row_spacing_m=row_spacing_m,
-                n_rows=max(n_rows, 1),
-                panel_azimuth_deg=panel_azimuth_deg,
-            )
+                n_rows = layout["properties"]["n_rows"]
+                shadow_matrix = calculate_shadow_matrix(
+                    solpos=solpos,
+                    panel_height_m=module_height_m,
+                    panel_tilt_deg=panel_tilt_deg,
+                    row_spacing_m=row_spacing_m,
+                    n_rows=max(n_rows, 1),
+                    panel_azimuth_deg=panel_azimuth_deg,
+                )
 
-            heatmaps = generate_seasonal_heatmaps(
-                pvgis_data=pvgis_data,
-                shadow_matrix=shadow_matrix,
-                zone_polygon=polygon,
-                resolution_m=2.0,
-                latitude=latitude,
-            )
+                heatmaps = generate_seasonal_heatmaps(
+                    pvgis_data=pvgis_data,
+                    shadow_matrix=shadow_matrix,
+                    zone_polygon=polygon,
+                    resolution_m=2.0,
+                    latitude=latitude,
+                )
 
-            yield_info = calculate_yield(
-                pvgis_data=tilted_data,
-                shadow_matrix=shadow_matrix,
-                n_panels=layout["properties"]["n_panels"],
-                module_power_wc=module_power_wc,
-                system_loss_pct=system_loss_pct,
-            )
+                yield_info = calculate_yield(
+                    pvgis_data=tilted_data,
+                    shadow_matrix=shadow_matrix,
+                    n_panels=layout["properties"]["n_panels"],
+                    module_power_wc=module_power_wc,
+                    system_loss_pct=system_loss_pct,
+                )
 
-            elevation = 0
-            if isinstance(meta, dict):
-                location = meta.get("location", meta.get("inputs", {}))
-                if isinstance(location, dict):
-                    elevation = location.get("elevation", 0)
+                elevation = 0
+                if isinstance(meta, dict):
+                    location = meta.get("location", meta.get("inputs", {}))
+                    if isinstance(location, dict):
+                        elevation = location.get("elevation", 0)
 
-            n_years = len(pvgis_data.index.year.unique())
+                n_years = len(pvgis_data.index.year.unique())
 
-            full_result = {
-                "site_info": {
-                    "latitude": latitude,
-                    "longitude": longitude,
-                    "altitude_m": float(elevation),
-                    "timezone": "Africa/Casablanca",
-                    "polygon_area_m2": round(
-                        polygon.area
-                        * 111320
-                        * 111320
-                        * np.cos(np.radians(latitude)),
-                        1,
-                    ),
-                    "terrain_classification": "flat_desert",
-                },
-                "layout": {
-                    "panels_geojson": layout,
-                    "n_panels": layout["properties"]["n_panels"],
-                    "n_rows": layout["properties"]["n_rows"],
-                    "row_spacing_m": row_spacing_m,
-                    "total_module_area_m2": round(
-                        layout["properties"]["total_area_m2"], 1
-                    ),
-                    "ground_coverage_ratio": round(
-                        layout["properties"]["ground_coverage_ratio"], 3
-                    ),
-                },
-                "solar_data": {
-                    "annual_ghi_kwh_m2": round(
-                        pvgis_data["ghi"].sum() / n_years / 1000, 1
-                    ),
-                    "annual_dni_kwh_m2": round(
-                        pvgis_data["dni"].sum() / n_years / 1000, 1
-                    ),
-                    "optimal_tilt_deg": panel_tilt_deg,
-                    "avg_temp_c": round(float(pvgis_data["temp_air"].mean()), 1),
-                    "avg_wind_speed_ms": round(
-                        float(pvgis_data["wind_speed"].mean()), 1
-                    ),
-                },
-                "shadow_analysis": {
-                    "annual_shadow_loss_pct": float(
-                        yield_info["shadow_loss_pct"]
-                    ),
-                    "winter_solstice_shadow_loss_pct": 5.1,
-                    "summer_solstice_shadow_loss_pct": 0.3,
-                    "shadow_matrix": "",
-                    "optimal_spacing_m": row_spacing_m,
-                    "shadow_timestamps": [],
-                },
-                "heatmaps": {
-                    "summer": {
-                        "grid": heatmaps["summer"]["grid"],
-                        "bounds": heatmaps["bounds"],
-                        "resolution_m": 2,
+                full_result = {
+                    "site_info": {
+                        "latitude": latitude,
+                        "longitude": longitude,
+                        "altitude_m": float(elevation),
+                        "timezone": "Africa/Casablanca",
+                        "polygon_area_m2": round(
+                            polygon.area
+                            * 111320
+                            * 111320
+                            * np.cos(np.radians(latitude)),
+                            1,
+                        ),
+                        "terrain_classification": "flat_desert",
                     },
-                    "winter": {
-                        "grid": heatmaps["winter"]["grid"],
-                        "bounds": heatmaps["bounds"],
-                        "resolution_m": 2,
+                    "layout": {
+                        "panels_geojson": layout,
+                        "n_panels": layout["properties"]["n_panels"],
+                        "n_rows": layout["properties"]["n_rows"],
+                        "row_spacing_m": row_spacing_m,
+                        "total_module_area_m2": round(
+                            layout["properties"]["total_area_m2"], 1
+                        ),
+                        "ground_coverage_ratio": round(
+                            layout["properties"]["ground_coverage_ratio"], 3
+                        ),
                     },
-                },
-                "yield_info": {
-                    "installed_capacity_kwc": yield_info[
-                        "installed_capacity_kwc"
-                    ],
-                    "installed_capacity_mwc": yield_info[
-                        "installed_capacity_mwc"
-                    ],
-                    "annual_yield_kwh": yield_info["annual_yield_kwh"],
-                    "specific_yield_kwh_kwp": yield_info[
-                        "specific_yield_kwh_kwp"
-                    ],
-                    "performance_ratio": yield_info["performance_ratio"],
-                    "lcoe_eur_mwh": yield_info["lcoe_eur_mwh"],
-                    "co2_avoided_tons_yr": yield_info["co2_avoided_tons_yr"],
-                },
-            }
-
-            agent_ref.analysis_data = full_result
-
-            return json.dumps(
-                {
-                    "n_panels": layout["properties"]["n_panels"],
-                    "n_rows": layout["properties"]["n_rows"],
-                    "installed_capacity_kwc": yield_info[
-                        "installed_capacity_kwc"
-                    ],
-                    "installed_capacity_mwc": yield_info[
-                        "installed_capacity_mwc"
-                    ],
-                    "annual_yield_mwh": yield_info.get("annual_yield_mwh", 0),
-                    "specific_yield_kwh_kwp": yield_info[
-                        "specific_yield_kwh_kwp"
-                    ],
-                    "performance_ratio": yield_info["performance_ratio"],
-                    "lcoe_eur_mwh": yield_info["lcoe_eur_mwh"],
-                    "shadow_loss_pct": yield_info["shadow_loss_pct"],
-                    "co2_avoided_tons_yr": yield_info["co2_avoided_tons_yr"],
-                    "annual_ghi_kwh_m2": round(
-                        pvgis_data["ghi"].sum() / n_years / 1000, 1
-                    ),
+                    "solar_data": {
+                        "annual_ghi_kwh_m2": round(
+                            pvgis_data["ghi"].sum() / n_years / 1000, 1
+                        ),
+                        "annual_dni_kwh_m2": round(
+                            pvgis_data["dni"].sum() / n_years / 1000, 1
+                        ),
+                        "optimal_tilt_deg": panel_tilt_deg,
+                        "avg_temp_c": round(float(pvgis_data["temp_air"].mean()), 1),
+                        "avg_wind_speed_ms": round(
+                            float(pvgis_data["wind_speed"].mean()), 1
+                        ),
+                    },
+                    "shadow_analysis": {
+                        "annual_shadow_loss_pct": float(
+                            yield_info["shadow_loss_pct"]
+                        ),
+                        "winter_solstice_shadow_loss_pct": 5.1,
+                        "summer_solstice_shadow_loss_pct": 0.3,
+                        "shadow_matrix": "",
+                        "optimal_spacing_m": row_spacing_m,
+                        "shadow_timestamps": [],
+                    },
+                    "heatmaps": {
+                        "summer": {
+                            "grid": heatmaps["summer"]["grid"],
+                            "bounds": heatmaps["bounds"],
+                            "resolution_m": 2,
+                        },
+                        "winter": {
+                            "grid": heatmaps["winter"]["grid"],
+                            "bounds": heatmaps["bounds"],
+                            "resolution_m": 2,
+                        },
+                    },
+                    "yield_info": {
+                        "installed_capacity_kwc": yield_info[
+                            "installed_capacity_kwc"
+                        ],
+                        "installed_capacity_mwc": yield_info[
+                            "installed_capacity_mwc"
+                        ],
+                        "annual_yield_kwh": yield_info["annual_yield_kwh"],
+                        "specific_yield_kwh_kwp": yield_info[
+                            "specific_yield_kwh_kwp"
+                        ],
+                        "performance_ratio": yield_info["performance_ratio"],
+                        "lcoe_eur_mwh": yield_info["lcoe_eur_mwh"],
+                        "co2_avoided_tons_yr": yield_info["co2_avoided_tons_yr"],
+                    },
                 }
-            )
+
+                agent_ref.analysis_data = full_result
+
+                return json.dumps(
+                    {
+                        "n_panels": layout["properties"]["n_panels"],
+                        "n_rows": layout["properties"]["n_rows"],
+                        "installed_capacity_kwc": yield_info[
+                            "installed_capacity_kwc"
+                        ],
+                        "installed_capacity_mwc": yield_info[
+                            "installed_capacity_mwc"
+                        ],
+                        "annual_yield_mwh": yield_info.get("annual_yield_mwh", 0),
+                        "specific_yield_kwh_kwp": yield_info[
+                            "specific_yield_kwh_kwp"
+                        ],
+                        "performance_ratio": yield_info["performance_ratio"],
+                        "lcoe_eur_mwh": yield_info["lcoe_eur_mwh"],
+                        "shadow_loss_pct": yield_info["shadow_loss_pct"],
+                        "co2_avoided_tons_yr": yield_info["co2_avoided_tons_yr"],
+                        "annual_ghi_kwh_m2": round(
+                            pvgis_data["ghi"].sum() / n_years / 1000, 1
+                        ),
+                    }
+                )
+            except Exception as e:
+                logger.error(f"run_solar_analysis failed: {e}")
+                return json.dumps({"error": str(e)})
 
         @tool
         async def generate_3d_visualization(
@@ -311,35 +323,39 @@ class SolarAgent:
             Returns:
                 JSON with 3D model URLs.
             """
-            text_prompt = (
-                f"Aerial view of a large ground-mounted solar farm with "
-                f"approximately {n_panels} photovoltaic panels on flat "
-                f"Saharan desert terrain near the Atlantic ocean, "
-                f"clear blue sky, realistic lighting"
-            )
-
-            if agent_ref.mode == "demo":
-                model = await asyncio.to_thread(
-                    generate_3d_demo, text_prompt
+            try:
+                text_prompt = (
+                    f"Aerial view of a large ground-mounted solar farm with "
+                    f"approximately {n_panels} photovoltaic panels on flat "
+                    f"Saharan desert terrain near the Atlantic ocean, "
+                    f"clear blue sky, realistic lighting"
                 )
-                result = {
-                    "render_image_url": "",
-                    "model_glb_url": model["model_glb_url"],
-                    "thumbnail_url": model["thumbnail_url"],
-                }
-            else:
-                render_url = await generate_solar_farm_render(text_prompt)
-                model = await asyncio.to_thread(
-                    generate_3d_test, render_url
-                )
-                result = {
-                    "render_image_url": render_url,
-                    "model_glb_url": model["model_glb_url"],
-                    "thumbnail_url": model["thumbnail_url"],
-                }
 
-            agent_ref.model_3d_data = result
-            return json.dumps(result)
+                if agent_ref.mode == "demo":
+                    model = await asyncio.to_thread(
+                        generate_3d_demo, text_prompt
+                    )
+                    result = {
+                        "render_image_url": "",
+                        "model_glb_url": model["model_glb_url"],
+                        "thumbnail_url": model["thumbnail_url"],
+                    }
+                else:
+                    render_url = await generate_solar_farm_render(text_prompt)
+                    model = await asyncio.to_thread(
+                        generate_3d_test, render_url
+                    )
+                    result = {
+                        "render_image_url": render_url,
+                        "model_glb_url": model["model_glb_url"],
+                        "thumbnail_url": model["thumbnail_url"],
+                    }
+
+                agent_ref.model_3d_data = result
+                return json.dumps(result)
+            except Exception as e:
+                logger.error(f"generate_3d_visualization failed: {e}")
+                return json.dumps({"error": str(e)})
 
         return [select_zone, run_solar_analysis, generate_3d_visualization]
 
@@ -357,8 +373,11 @@ class SolarAgent:
         """Run the agent and yield SSE-compatible event dicts."""
         tools = self._make_tools()
 
-        llm = ChatOpenAI(model="gpt-5-mini", temperature=0)
-        agent = create_react_agent(llm, tools, prompt=AGENT_SYSTEM_PROMPT)
+        llm = ChatOpenAI(model="gpt-5-mini")
+        agent = create_react_agent(
+            llm, tools, prompt=AGENT_SYSTEM_PROMPT,
+            recursion_limit=12,
+        )
 
         user_message = (
             f"Perform a complete solar farm site assessment at coordinates "
@@ -367,7 +386,7 @@ class SolarAgent:
             f"then run the full solar analysis and generate a 3D model."
         )
 
-        config = {"configurable": {"thread_id": "solar-assessment"}}
+        config = {"configurable": {"thread_id": f"solar-{uuid.uuid4().hex[:12]}"}}
 
         async for event in agent.astream_events(
             {"messages": [{"role": "user", "content": user_message}]},
@@ -387,14 +406,20 @@ class SolarAgent:
             elif kind == "on_tool_end":
                 tool_name = event["name"]
 
-                if tool_name == "select_zone" and self.polygon_data:
-                    yield {"type": "polygon", "data": self.polygon_data}
-                elif tool_name == "run_solar_analysis" and self.analysis_data:
-                    yield {"type": "analysis", "data": self.analysis_data}
-                elif (
-                    tool_name == "generate_3d_visualization"
-                    and self.model_3d_data
-                ):
-                    yield {"type": "model_3d", "data": self.model_3d_data}
+                if tool_name == "select_zone":
+                    if self.polygon_data:
+                        yield {"type": "polygon", "data": self.polygon_data}
+                    else:
+                        yield {"type": "error", "message": "Zone selection failed — no polygon generated"}
+                elif tool_name == "run_solar_analysis":
+                    if self.analysis_data:
+                        yield {"type": "analysis", "data": self.analysis_data}
+                    else:
+                        yield {"type": "error", "message": "Solar analysis failed — no results generated"}
+                elif tool_name == "generate_3d_visualization":
+                    if self.model_3d_data:
+                        yield {"type": "model_3d", "data": self.model_3d_data}
+                    else:
+                        yield {"type": "error", "message": "3D visualization failed — no model generated"}
 
         yield {"type": "done"}

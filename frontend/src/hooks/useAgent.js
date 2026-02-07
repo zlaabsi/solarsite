@@ -65,10 +65,15 @@ export default function useAgent() {
                   break;
 
                 case "tool_start":
-                  setSteps((prev) => [
-                    ...prev,
-                    { tool: event.tool, status: "running" },
-                  ]);
+                  setSteps((prev) => {
+                    // Prevent duplicate entries if agent retries the same tool
+                    if (prev.some((s) => s.tool === event.tool)) {
+                      return prev.map((s) =>
+                        s.tool === event.tool ? { ...s, status: "running" } : s
+                      );
+                    }
+                    return [...prev, { tool: event.tool, status: "running" }];
+                  });
                   setThinking("");
                   break;
 

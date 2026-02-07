@@ -1,6 +1,9 @@
 import base64
 import json
+import logging
 from openai import AsyncOpenAI
+
+logger = logging.getLogger(__name__)
 
 MODEL_VISION = "gpt-5-mini"
 MODEL_VOICE = "gpt-5-nano"
@@ -52,14 +55,25 @@ async def analyze_terrain_image(image_bytes: bytes, lat: float, lon: float) -> d
 
 
 async def generate_solar_farm_render(prompt: str) -> str:
-    client = AsyncOpenAI()
-    result = await client.images.generate(
-        model="gpt-image-1.5",
-        prompt=prompt,
-        quality="low",
-        size="1792x1024",
-    )
-    return result.data[0].url
+    """Generate a solar farm render image. Returns a data URI (base64)."""
+    try:
+        client = AsyncOpenAI()
+        result = await client.images.generate(
+            model="gpt-image-1.5",
+            prompt=prompt,
+            quality="low",
+            size="1536x1024",
+        )
+        image = result.data[0]
+        # gpt-image-1.5 returns b64_json, not url
+        if image.url:
+            return image.url
+        if image.b64_json:
+            return f"data:image/png;base64,{image.b64_json}"
+        raise ValueError("No image data in response")
+    except Exception as e:
+        logger.error(f"GPT Image render failed: {e}")
+        raise RuntimeError(f"Image generation failed: {e}") from e
 
 
 async def generate_voice_response(user_text: str, analysis_data: dict) -> dict:
