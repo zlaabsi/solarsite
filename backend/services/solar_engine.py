@@ -2,6 +2,8 @@ import numpy as np
 import pvlib
 import pandas as pd
 
+from services.geo_utils import lookup_timezone
+
 
 def _add_derived_columns(data: pd.DataFrame) -> pd.DataFrame:
     """Add ghi, dni, poa_global columns from PVGIS POA components."""
@@ -21,10 +23,11 @@ def _add_derived_columns(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_solar_positions(lat: float, lon: float, year: int = 2024) -> pd.DataFrame:
+    tz = lookup_timezone(lat, lon)
     location = pvlib.location.Location(
         latitude=lat,
         longitude=lon,
-        tz="Africa/Casablanca",
+        tz=tz,
         altitude=0,
     )
 
@@ -32,7 +35,7 @@ def get_solar_positions(lat: float, lon: float, year: int = 2024) -> pd.DataFram
         start=f"{year}-01-01",
         end=f"{year}-12-31 23:00",
         freq="h",
-        tz="Africa/Casablanca",
+        tz=tz,
     )
 
     solpos = location.get_solarposition(times)

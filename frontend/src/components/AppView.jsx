@@ -1,14 +1,35 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import useAgent from "../hooks/useAgent";
+import usePolygonEdit from "../hooks/usePolygonEdit";
+import useSolarAnalysis from "../hooks/useSolarAnalysis";
 import MapView from "./MapView";
 import ModelViewer from "./ModelViewer";
 import ReportPanel from "./ReportPanel";
 import {
   DEFAULT_LAT,
   DEFAULT_LON,
-  DAKHLA_GHI_KWH_M2_YEAR,
-  DAKHLA_SUNSHINE_HOURS,
+  DEFAULT_PANEL_TILT_DEG,
+  DEFAULT_PANEL_AZIMUTH_DEG,
+  DEFAULT_ROW_SPACING_M,
+  DEFAULT_MODULE_WIDTH_M,
+  DEFAULT_MODULE_HEIGHT_M,
+  DEFAULT_MODULE_POWER_WC,
+  DEFAULT_SYSTEM_LOSS_PCT,
+  DEFAULT_ALBEDO,
+  FALLBACK_GHI_KWH_M2_YEAR,
+  FALLBACK_SUNSHINE_HOURS,
 } from "../constants";
+
+/* ─────────────────────── Coord Formatter ─────────────────────── */
+function formatCoord(lat, lon) {
+  const latD = lat >= 0 ? "N" : "S";
+  const lonD = lon >= 0 ? "E" : "W";
+  return {
+    lat: `${Math.abs(lat).toFixed(4)}\u00b0${latD}`,
+    lon: `${Math.abs(lon).toFixed(4)}\u00b0${lonD}`,
+    label: `${Math.abs(lat).toFixed(2)}\u00b0${latD} ${Math.abs(lon).toFixed(2)}\u00b0${lonD}`,
+  };
+}
 
 /* ─────────────────────── Corner Brackets ─────────────────────── */
 function Corners({ children, className = "" }) {
@@ -149,8 +170,115 @@ export default function AppView({ onBack }) {
   const [drawingPoints, setDrawingPoints] = useState([]);
   const [is3D, setIs3D] = useState(true);
 
-  const handleLaunch = () => {
-    runAgent(DEFAULT_LAT, DEFAULT_LON, 5.0, mode);
+  /* ─── User-drawn polygon ─── */
+  const [drawnPolygon, setDrawnPolygon] = useState(null);
+
+  /* ─── Polygon edit state ─── */
+  const [polygonOverride, setPolygonOverride] = useState(null);
+  const [analysisOverride, setAnalysisOverride] = useState(null);
+  const [reAnalyzing, setReAnalyzing] = useState(false);
+
+  const effectivePolygon = polygonOverride || drawnPolygon || polygon;
+  const effectiveAnalysis = analysisOverride || analysisData;
+
+  const {
+    editPolygon,
+    editCorners,
+    isEditing,
+    editMode: currentEditMode,
+    isDragging: isDragEditing,
+    startEdit,
+    cancelEdit,
+    commitEdit,
+    setEditMode: setPolygonEditMode,
+    handlePointerDown,
+    handlePointerMove,
+    handlePointerUp,
+  } = usePolygonEdit(effectivePolygon);
+
+  const { analyze } = useSolarAnalysis();
+
+  // Reset overrides when agent runs again
+  useEffect(() => {
+    if (agentState === "running") {
+      setDrawnPolygon(null);
+      setPolygonOverride(null);
+      setAnalysisOverride(null);
+      setReAnalyzing(false);
+    }
+  }, [agentState]);
+
+  const handleApplyEdit = async () => {
+    const result = commitEdit();
+    if (!result) return;
+    const { polygon: newPolygon, azimuthDeg } = result;
+    setPolygonOverride(newPolygon);
+    setReAnalyzing(true);
+    try {
+      const analysis = await analyze({
+        latitude: DEFAULT_LAT,
+        longitude: DEFAULT_LON,
+        polygon_geojson: newPolygon,
+        panel_tilt_deg: DEFAULT_PANEL_TILT_DEG,
+        panel_azimuth_deg: azimuthDeg,
+        row_spacing_m: DEFAULT_ROW_SPACING_M,
+        module_width_m: DEFAULT_MODULE_WIDTH_M,
+        module_height_m: DEFAULT_MODULE_HEIGHT_M,
+        module_power_wc: DEFAULT_MODULE_POWER_WC,
+        system_loss_pct: DEFAULT_SYSTEM_LOSS_PCT,
+        albedo: DEFAULT_ALBEDO,
+      });
+      if (analysis) setAnalysisOverride(analysis);
+    } finally {
+      setReAnalyzing(false);
+    }
+  };
+
+  const hasDrawnPolygon = !!drawnPolygon;
+
+  const handleLaunch = async () => {
+    if (hasDrawnPolygon) {
+      // Direct analysis with user-drawn polygon (skip agent)
+      setReAnalyzing(true);
+      try {
+        const analysis = await analyze({
+          latitude: DEFAULT_LAT,
+          longitude: DEFAULT_LON,
+          polygon_geojson: drawnPolygon,
+          panel_tilt_deg: DEFAULT_PANEL_TILT_DEG,
+          panel_azimuth_deg: DEFAULT_PANEL_AZIMUTH_DEG,
+          row_spacing_m: DEFAULT_ROW_SPACING_M,
+          module_width_m: DEFAULT_MODULE_WIDTH_M,
+          module_height_m: DEFAULT_MODULE_HEIGHT_M,
+          module_power_wc: DEFAULT_MODULE_POWER_WC,
+          system_loss_pct: DEFAULT_SYSTEM_LOSS_PCT,
+          albedo: DEFAULT_ALBEDO,
+        });
+        if (analysis) setAnalysisOverride(analysis);
+      } finally {
+        setReAnalyzing(false);
+      }
+    } else {
+      // No drawn polygon → run full agent (creates its own zone)
+      runAgent(DEFAULT_LAT, DEFAULT_LON, 5.0, mode);
+    }
+  };
+
+  const handleFinishDrawing = () => {
+    if (drawingPoints.length < 3) return;
+    // Convert drawn points to GeoJSON Polygon
+    const closed = [...drawingPoints, drawingPoints[0]];
+    setDrawnPolygon({ type: "Polygon", coordinates: [closed] });
+    setIsDrawing(false);
+    setDrawingPoints([]);
+    // Clear any previous analysis since polygon changed
+    setAnalysisOverride(null);
+    setPolygonOverride(null);
+  };
+
+  const handleCancelDrawing = () => {
+    setIsDrawing(false);
+    setDrawingPoints([]);
   };
 
   const handleMapClick = (lngLat) => {
@@ -161,15 +289,20 @@ export default function AppView({ onBack }) {
 
   const isRunning = agentState === "running";
   const isDone = agentState === "done";
-  const hasAnalysis = !!analysisData;
-  const ghi = analysisData?.solar_data?.annual_ghi_kwh_m2 ?? DAKHLA_GHI_KWH_M2_YEAR;
-  const lcoe = analysisData?.yield_info?.lcoe_eur_mwh;
-  const panels = analysisData?.layout?.n_panels;
-  const capacity = analysisData?.yield_info?.installed_capacity_mwc;
-  const annualYield = analysisData?.yield_info?.annual_yield_kwh;
-  const pr = analysisData?.yield_info?.performance_ratio;
-  const shadowLoss = analysisData?.shadow_analysis?.annual_shadow_loss_pct;
-  const co2 = analysisData?.yield_info?.co2_avoided_tons_yr;
+  const hasAnalysis = !!effectiveAnalysis;
+  const displayLat = effectiveAnalysis?.site_info?.latitude ?? DEFAULT_LAT;
+  const displayLon = effectiveAnalysis?.site_info?.longitude ?? DEFAULT_LON;
+  const coords = formatCoord(displayLat, displayLon);
+  const locationName = effectiveAnalysis?.site_info?.location_name || "";
+
+  const ghi = effectiveAnalysis?.solar_data?.annual_ghi_kwh_m2 ?? FALLBACK_GHI_KWH_M2_YEAR;
+  const lcoe = effectiveAnalysis?.yield_info?.lcoe_eur_mwh;
+  const panels = effectiveAnalysis?.layout?.n_panels;
+  const capacity = effectiveAnalysis?.yield_info?.installed_capacity_mwc;
+  const annualYield = effectiveAnalysis?.yield_info?.annual_yield_kwh;
+  const pr = effectiveAnalysis?.yield_info?.performance_ratio;
+  const shadowLoss = effectiveAnalysis?.shadow_analysis?.annual_shadow_loss_pct;
+  const co2 = effectiveAnalysis?.yield_info?.co2_avoided_tons_yr;
 
   /* System log */
   const toolLabels = {
@@ -213,7 +346,11 @@ export default function AppView({ onBack }) {
         }}
       >
         <span>
-          {isRunning ? (
+          {reAnalyzing ? (
+            <><span style={{ color: "#e05438" }}>●</span> RE-ANALYZING — UPDATED ZONE</>
+          ) : isEditing ? (
+            <><span style={{ color: "#e05438" }}>●</span> EDITING — ZONE GEOMETRY</>
+          ) : isRunning ? (
             <><span style={{ color: "#e05438" }}>●</span> ACTIVE — ANALYSIS IN PROGRESS</>
           ) : isDone ? (
             <><span style={{ color: "#22c55e" }}>●</span> COMPLETE — RESULTS READY</>
@@ -222,7 +359,7 @@ export default function AppView({ onBack }) {
           )}
         </span>
         <span>SOLAR AI LABORATORY</span>
-        <span>DAKHLA, MOROCCO — 23.71°N 15.94°W</span>
+        <span>{locationName ? `${locationName} — ${coords.label}` : coords.label}</span>
       </div>
 
       {/* ═══════════ NAV BAR ═══════════ */}
@@ -313,10 +450,11 @@ export default function AppView({ onBack }) {
             <Corners className="p-1">
               <button
                 onClick={isRunning ? stopAgent : handleLaunch}
+                disabled={reAnalyzing}
                 style={{
                   width: "100%",
                   padding: "10px 16px",
-                  background: isRunning ? "#1a1a1a" : "#e05438",
+                  background: isRunning ? "#1a1a1a" : reAnalyzing ? "#888" : "#e05438",
                   color: "#fff",
                   border: "none",
                   cursor: "pointer",
@@ -328,7 +466,7 @@ export default function AppView({ onBack }) {
                   transition: "background 0.15s",
                 }}
               >
-                {isRunning ? "■  STOP AGENT" : isDone ? "↻  RUN AGAIN" : "▶  RUN ANALYSIS"}
+                {isRunning ? "■  STOP AGENT" : reAnalyzing ? "●  ANALYZING..." : hasDrawnPolygon ? "▶  ANALYZE ZONE" : isDone ? "↻  RUN AGAIN" : "▶  RUN ANALYSIS"}
               </button>
             </Corners>
 
@@ -554,10 +692,10 @@ export default function AppView({ onBack }) {
           ) : (
             /* Satellite map */
             <MapView
-              analysisData={analysisData}
+              analysisData={effectiveAnalysis}
               isDrawing={isDrawing}
               drawingPoints={drawingPoints}
-              polygon={polygon}
+              polygon={effectivePolygon}
               onMapClick={handleMapClick}
               hour={hour}
               month={month}
@@ -565,6 +703,14 @@ export default function AppView({ onBack }) {
               onToggle3D={() => setIs3D(!is3D)}
               showHeatmap={showHeatmap}
               heatmapSeason={heatmapSeason}
+              isEditing={isEditing}
+              editPolygon={editPolygon}
+              editCorners={editCorners}
+              editMode={currentEditMode}
+              isDragEditing={isDragEditing}
+              onEditPointerDown={handlePointerDown}
+              onEditPointerMove={handlePointerMove}
+              onEditPointerUp={handlePointerUp}
             />
           )}
 
@@ -599,11 +745,94 @@ export default function AppView({ onBack }) {
             </button>
           )}
 
-          {/* ── Map overlay: drawing controls (top-right) ── */}
-          <div style={{ position: "absolute", top: 16, right: 16, zIndex: 10, display: "flex", gap: 8 }}>
-            {!isDrawing ? (
+          {/* ── Map overlay: drawing controls + edit zone (top-right) ── */}
+          <div style={{ position: "absolute", top: 16, right: 16, zIndex: 10, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+            {/* Drawing controls */}
+            <div style={{ display: "flex", gap: 8 }}>
+              {!isDrawing && !isEditing ? (
+                <button
+                  onClick={() => { setIsDrawing(true); setDrawingPoints([]); }}
+                  style={{
+                    padding: "8px 16px",
+                    background: "rgba(26,26,26,0.85)",
+                    backdropFilter: "blur(8px)",
+                    color: "#f0ebe0",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    cursor: "pointer",
+                    fontSize: "10.5px",
+                    fontFamily: "'IBM Plex Mono', monospace",
+                    letterSpacing: "0.12em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  ✎ DRAW ZONE
+                </button>
+              ) : isDrawing ? (
+                <>
+                  <button
+                    onClick={handleFinishDrawing}
+                    disabled={drawingPoints.length < 3}
+                    style={{
+                      padding: "8px 16px",
+                      background: drawingPoints.length >= 3 ? "rgba(34,197,94,0.85)" : "rgba(26,26,26,0.5)",
+                      backdropFilter: "blur(8px)",
+                      color: "#fff",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      cursor: drawingPoints.length >= 3 ? "pointer" : "not-allowed",
+                      fontSize: "10.5px",
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      letterSpacing: "0.12em",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    ✓ FINISH ({drawingPoints.length} pts)
+                  </button>
+                  <button
+                    onClick={handleCancelDrawing}
+                    style={{
+                      padding: "8px 16px",
+                      background: "rgba(220,38,38,0.8)",
+                      backdropFilter: "blur(8px)",
+                      color: "#fff",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      cursor: "pointer",
+                      fontSize: "10.5px",
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      letterSpacing: "0.12em",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    ✕ CANCEL
+                  </button>
+                </>
+              ) : null}
+            </div>
+
+            {/* CLEAR ZONE button — shown when user has a drawn polygon */}
+            {hasDrawnPolygon && !isEditing && !isRunning && !isDrawing && !reAnalyzing && (
               <button
-                onClick={() => { setIsDrawing(true); setDrawingPoints([]); }}
+                onClick={() => { setDrawnPolygon(null); setAnalysisOverride(null); setPolygonOverride(null); }}
+                style={{
+                  padding: "8px 16px",
+                  background: "rgba(220,38,38,0.8)",
+                  backdropFilter: "blur(8px)",
+                  color: "#fff",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  cursor: "pointer",
+                  fontSize: "10.5px",
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                }}
+              >
+                ✕ CLEAR ZONE
+              </button>
+            )}
+
+            {/* EDIT ZONE button — shown when analysis done + not editing + not running */}
+            {hasAnalysis && !isEditing && !isRunning && !isDrawing && !reAnalyzing && (
+              <button
+                onClick={startEdit}
                 style={{
                   padding: "8px 16px",
                   background: "rgba(26,26,26,0.85)",
@@ -617,46 +846,108 @@ export default function AppView({ onBack }) {
                   textTransform: "uppercase",
                 }}
               >
-                ✎ DRAW ZONE
+                ✎ EDIT ZONE
               </button>
-            ) : (
-              <>
-                <button
-                  onClick={() => { setIsDrawing(false); }}
-                  disabled={drawingPoints.length < 3}
+            )}
+
+            {/* Edit mode controls — shown when editing */}
+            {isEditing && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                {/* Mode toggles */}
+                <div
                   style={{
-                    padding: "8px 16px",
-                    background: drawingPoints.length >= 3 ? "rgba(34,197,94,0.85)" : "rgba(26,26,26,0.5)",
+                    background: "rgba(26,26,26,0.85)",
                     backdropFilter: "blur(8px)",
-                    color: "#fff",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    cursor: drawingPoints.length >= 3 ? "pointer" : "not-allowed",
-                    fontSize: "10.5px",
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    letterSpacing: "0.12em",
-                    textTransform: "uppercase",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    display: "flex",
+                    overflow: "hidden",
                   }}
                 >
-                  ✓ FINISH ({drawingPoints.length} pts)
-                </button>
-                <button
-                  onClick={() => { setIsDrawing(false); setDrawingPoints([]); }}
-                  style={{
-                    padding: "8px 16px",
-                    background: "rgba(220,38,38,0.8)",
-                    backdropFilter: "blur(8px)",
-                    color: "#fff",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    cursor: "pointer",
-                    fontSize: "10.5px",
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    letterSpacing: "0.12em",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  ✕ CANCEL
-                </button>
-              </>
+                  {["translate", "resize", "rotate"].map((m) => {
+                    const active = currentEditMode === m;
+                    const label = m === "translate" ? "MOVE" : m === "resize" ? "RESIZE" : "ROTATE";
+                    return (
+                      <button
+                        key={m}
+                        onClick={() => setPolygonEditMode(m)}
+                        style={{
+                          padding: "6px 14px",
+                          background: active ? "rgba(224,84,56,0.9)" : "transparent",
+                          color: active ? "#fff" : "rgba(240,235,224,0.5)",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: "10px",
+                          fontFamily: "'IBM Plex Mono', monospace",
+                          fontWeight: active ? 700 : 400,
+                          letterSpacing: "0.1em",
+                          transition: "all 0.15s",
+                        }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* APPLY / CANCEL */}
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    onClick={handleApplyEdit}
+                    style={{
+                      padding: "8px 18px",
+                      background: "rgba(34,197,94,0.85)",
+                      backdropFilter: "blur(8px)",
+                      color: "#fff",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      cursor: "pointer",
+                      fontSize: "10.5px",
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      letterSpacing: "0.12em",
+                      textTransform: "uppercase",
+                      fontWeight: 600,
+                    }}
+                  >
+                    ✓ APPLY
+                  </button>
+                  <button
+                    onClick={cancelEdit}
+                    style={{
+                      padding: "8px 18px",
+                      background: "rgba(220,38,38,0.8)",
+                      backdropFilter: "blur(8px)",
+                      color: "#fff",
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      cursor: "pointer",
+                      fontSize: "10.5px",
+                      fontFamily: "'IBM Plex Mono', monospace",
+                      letterSpacing: "0.12em",
+                      textTransform: "uppercase",
+                      fontWeight: 600,
+                    }}
+                  >
+                    ✕ CANCEL
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Re-analyzing spinner overlay */}
+            {reAnalyzing && (
+              <div
+                style={{
+                  padding: "8px 16px",
+                  background: "rgba(26,26,26,0.85)",
+                  backdropFilter: "blur(8px)",
+                  color: "#e05438",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  fontSize: "10.5px",
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                }}
+              >
+                <span className="blink">●</span> RE-ANALYZING...
+              </div>
             )}
           </div>
 
@@ -681,9 +972,9 @@ export default function AppView({ onBack }) {
               color: "rgba(240,235,224,0.7)",
             }}
           >
-            <span>23.7145°N</span>
+            <span>{coords.lat}</span>
             <span style={{ opacity: 0.3 }}>|</span>
-            <span>15.9369°W</span>
+            <span>{coords.lon}</span>
             <span style={{ opacity: 0.3 }}>|</span>
             <span>{MONTHS[month - 1]} {String(hour).padStart(2, "0")}:00</span>
             {hasAnalysis && (
@@ -777,8 +1068,8 @@ export default function AppView({ onBack }) {
         }}
       >
         <span>SPEC: 2401-SL / SOLAR OPS</span>
-        <span>{DAKHLA_SUNSHINE_HOURS}+ SUNSHINE HOURS / YEAR</span>
-        <span>EXPERIMENTAL LABORATORY — DAKHLA, MOROCCO</span>
+        <span>{FALLBACK_SUNSHINE_HOURS}+ SUNSHINE HOURS / YEAR</span>
+        <span>{locationName ? `SOLAR AI LABORATORY — ${locationName}` : "SOLAR AI LABORATORY"}</span>
       </div>
     </div>
   );

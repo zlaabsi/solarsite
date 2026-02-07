@@ -3,7 +3,7 @@ export function generatePanelGrid(
   moduleWidthM = 1.134,
   moduleHeightM = 2.278,
   rowSpacingM = 3.0,
-  latitude = 23.7
+  latitude = 0
 ) {
   const latScale = 111320;
   const lonScale = 111320 * Math.cos((latitude * Math.PI) / 180);

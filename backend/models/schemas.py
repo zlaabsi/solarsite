@@ -20,6 +20,11 @@ class AnalyzeRequest(BaseModel):
     module_power_wc: float = 550
     system_loss_pct: float = 14
     albedo: float = 0.3
+    capex_eur_per_wc: float = 0.6
+    opex_eur_per_kwc_year: float = 10.0
+    wacc: float = 0.06
+    lifetime_years: int = 25
+    co2_factor_t_per_mwh: float = 0.47
 
 
 class SiteInfo(BaseModel):
@@ -29,6 +34,7 @@ class SiteInfo(BaseModel):
     timezone: str
     polygon_area_m2: float
     terrain_classification: str
+    location_name: str = ""
 
 
 class LayoutInfo(BaseModel):

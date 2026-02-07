@@ -65,6 +65,20 @@ def calculate_shadow_matrix(
     )
 
 
+def compute_seasonal_shadow_losses(shadow_matrix: pd.DataFrame, latitude: float) -> dict:
+    """Compute winter/summer shadow loss percentages from actual shadow matrix."""
+    if latitude >= 0:
+        winter_months, summer_months = [12, 1, 2], [6, 7, 8]
+    else:
+        winter_months, summer_months = [6, 7, 8], [12, 1, 2]
+    winter = shadow_matrix[shadow_matrix.index.month.isin(winter_months)]
+    summer = shadow_matrix[shadow_matrix.index.month.isin(summer_months)]
+    return {
+        "winter_shadow_loss_pct": round(float(winter.values.mean() * 100), 2) if len(winter) else 0.0,
+        "summer_shadow_loss_pct": round(float(summer.values.mean() * 100), 2) if len(summer) else 0.0,
+    }
+
+
 def calculate_shadow_polygons_for_timestamp(
     panel_rows_geojson: list,
     solar_elevation_deg: float,

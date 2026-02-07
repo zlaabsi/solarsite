@@ -4,6 +4,7 @@ import { MapboxOverlay } from "@deck.gl/mapbox";
 import { useControl } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { MAPTILER_KEY } from "../constants";
+import { centroid } from "../hooks/usePolygonEdit";
 import { calculateShadowPolygons } from "../utils/shadow-geometry";
 import { createPanelLayer } from "./PanelOverlay";
 import { createShadowLayer } from "./ShadowRenderer";
@@ -73,6 +74,15 @@ export default function MapView({
   onToggle3D,
   showHeatmap = false,
   heatmapSeason = "summer",
+  /* Polygon edit props */
+  isEditing = false,
+  editPolygon = null,
+  editCorners = null,
+  editMode = null,
+  isDragEditing = false,
+  onEditPointerDown,
+  onEditPointerMove,
+  onEditPointerUp,
 }) {
   const [viewState, setViewState] = useState(INITIAL_VIEW_3D);
   const mapRef = useRef(null);
@@ -135,18 +145,27 @@ export default function MapView({
 
   const panelFeatures = analysisData?.layout?.panels_geojson?.features || [];
 
+  const siteLatitude = useMemo(() => {
+    if (analysisData?.site_info?.latitude) return analysisData.site_info.latitude;
+    if (polygon?.coordinates?.[0]) {
+      const coords = polygon.coordinates[0];
+      return coords.reduce((s, c) => s + c[1], 0) / coords.length;
+    }
+    return 23.7145;
+  }, [analysisData, polygon]);
+
   const solarElevation = useMemo(() => {
     const dayOfYear = month * 30;
     const declination = 23.45 * Math.sin(((2 * Math.PI) / 365) * (dayOfYear - 81));
     const hourAngle = (hour - 12) * 15;
-    const latRad = (23.7 * Math.PI) / 180;
+    const latRad = (siteLatitude * Math.PI) / 180;
     const decRad = (declination * Math.PI) / 180;
     const haRad = (hourAngle * Math.PI) / 180;
     const sinElev =
       Math.sin(latRad) * Math.sin(decRad) +
       Math.cos(latRad) * Math.cos(decRad) * Math.cos(haRad);
     return (Math.asin(sinElev) * 180) / Math.PI;
-  }, [hour, month]);
+  }, [hour, month, siteLatitude]);
 
   const solarAzimuth = useMemo(() => {
     const hourAngle = (hour - 12) * 15;
@@ -161,9 +180,10 @@ export default function MapView({
       solarElevation,
       solarAzimuth,
       2.278,
-      25
+      25,
+      siteLatitude
     );
-  }, [panelFeatures, solarElevation, solarAzimuth]);
+  }, [panelFeatures, solarElevation, solarAzimuth, siteLatitude]);
 
   /* ─── Heatmap data ─── */
   const heatmapData = useMemo(() => {
@@ -172,6 +192,84 @@ export default function MapView({
     if (!season) return null;
     return { grid: season.grid, bounds: season.bounds };
   }, [showHeatmap, heatmapSeason, analysisData]);
+
+  /* ─── Edit mode: disable map drag while dragging handles ─── */
+  useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    if (isDragEditing) {
+      map.dragPan.disable();
+    } else {
+      map.dragPan.enable();
+    }
+  }, [isDragEditing]);
+
+  /* ─── Edit polygon GeoJSON ─── */
+  const editPolygonGeoJSON = useMemo(() => {
+    if (!isEditing || !editPolygon) return null;
+    return { type: "Feature", geometry: editPolygon };
+  }, [isEditing, editPolygon]);
+
+  /* ─── Edit handles data ─── */
+  const editHandles = useMemo(() => {
+    if (!isEditing || !editCorners || editCorners.length < 4) return { corners: [], rotationHandle: null, center: null };
+    const center = centroid(editCorners);
+    // Rotation handle: offset above centroid (north) by ~30% of polygon height
+    const lats = editCorners.map((c) => c[1]);
+    const maxLat = Math.max(...lats);
+    const span = maxLat - Math.min(...lats);
+    const rotationHandle = [center[0], maxLat + Math.max(span * 0.35, 0.0003)];
+    return { corners: editCorners.slice(0, 4), rotationHandle, center };
+  }, [isEditing, editCorners]);
+
+  /* ─── Connector line from centroid to rotation handle ─── */
+  const connectorGeoJSON = useMemo(() => {
+    if (!editHandles.center || !editHandles.rotationHandle) return null;
+    return {
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates: [editHandles.center, editHandles.rotationHandle],
+      },
+    };
+  }, [editHandles]);
+
+  /* ─── Cursor logic ─── */
+  const mapCursor = useMemo(() => {
+    if (isDrawing) return "crosshair";
+    if (isEditing && isDragEditing) {
+      if (editMode === "rotate") return "crosshair";
+      if (editMode === "resize") return "nwse-resize";
+      return "move";
+    }
+    if (isEditing) return "default";
+    return "grab";
+  }, [isDrawing, isEditing, isDragEditing, editMode]);
+
+  /* ─── Map mouse events for translate drag ─── */
+  const handleMouseDown = useCallback(
+    (e) => {
+      if (!isEditing || editMode !== "translate") return;
+      if (e.originalEvent?.button !== 0) return;
+      // Check if click is within the edit polygon — approximate by checking distance
+      // For simplicity, treat any click on the map body (not handles) as a translate start
+      onEditPointerDown?.(e.lngLat, "polygon");
+    },
+    [isEditing, editMode, onEditPointerDown]
+  );
+
+  const handleMouseMove = useCallback(
+    (e) => {
+      if (!isDragEditing) return;
+      onEditPointerMove?.(e.lngLat);
+    },
+    [isDragEditing, onEditPointerMove]
+  );
+
+  const handleMouseUp = useCallback(() => {
+    if (!isDragEditing) return;
+    onEditPointerUp?.();
+  }, [isDragEditing, onEditPointerUp]);
 
   const layers = useMemo(() => {
     const result = [];
@@ -218,9 +316,12 @@ export default function MapView({
       onMove={(e) => setViewState(e.viewState)}
       onClick={handleClick}
       onLoad={handleMapLoad}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
       mapStyle={SATELLITE_STYLE}
       style={{ width: "100%", height: "100%" }}
-      cursor={isDrawing ? "crosshair" : "grab"}
+      cursor={mapCursor}
       maxPitch={85}
     >
       <DeckGLOverlay layers={layers} />
@@ -255,7 +356,7 @@ export default function MapView({
         </Marker>
       ))}
 
-      {polygonGeoJSON && (
+      {polygonGeoJSON && !isEditing && (
         <Source type="geojson" data={polygonGeoJSON}>
           <Layer
             type="line"
@@ -272,6 +373,96 @@ export default function MapView({
             }}
           />
         </Source>
+      )}
+
+      {/* ── Edit polygon (dashed) ── */}
+      {editPolygonGeoJSON && (
+        <Source type="geojson" data={editPolygonGeoJSON}>
+          <Layer
+            type="line"
+            paint={{
+              "line-color": "#e05438",
+              "line-width": 2.5,
+              "line-dasharray": [4, 3],
+            }}
+          />
+          <Layer
+            type="fill"
+            paint={{
+              "fill-color": "#e05438",
+              "fill-opacity": 0.18,
+            }}
+          />
+        </Source>
+      )}
+
+      {/* ── Connector line: centroid → rotation handle ── */}
+      {connectorGeoJSON && (
+        <Source type="geojson" data={connectorGeoJSON}>
+          <Layer
+            type="line"
+            paint={{
+              "line-color": "#22c55e",
+              "line-width": 1,
+              "line-dasharray": [4, 3],
+            }}
+          />
+        </Source>
+      )}
+
+      {/* ── Corner resize handles ── */}
+      {isEditing &&
+        editHandles.corners.map((corner, i) => (
+          <Marker
+            key={`corner-${i}`}
+            longitude={corner[0]}
+            latitude={corner[1]}
+            anchor="center"
+          >
+            <div
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                // Build a synthetic lngLat
+                onEditPointerDown?.({ lng: corner[0], lat: corner[1] }, `corner:${i}`);
+              }}
+              style={{
+                width: 12,
+                height: 12,
+                background: "#e05438",
+                border: "2px solid #fff",
+                cursor: "nwse-resize",
+                boxShadow: "0 0 6px rgba(0,0,0,0.5)",
+              }}
+            />
+          </Marker>
+        ))}
+
+      {/* ── Rotation handle ── */}
+      {isEditing && editHandles.rotationHandle && (
+        <Marker
+          longitude={editHandles.rotationHandle[0]}
+          latitude={editHandles.rotationHandle[1]}
+          anchor="center"
+        >
+          <div
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onEditPointerDown?.(
+                { lng: editHandles.rotationHandle[0], lat: editHandles.rotationHandle[1] },
+                "rotate"
+              );
+            }}
+            style={{
+              width: 16,
+              height: 16,
+              borderRadius: "50%",
+              background: "#22c55e",
+              border: "2px solid #fff",
+              cursor: "crosshair",
+              boxShadow: "0 0 8px rgba(34,197,94,0.6), 0 0 4px rgba(0,0,0,0.4)",
+            }}
+          />
+        </Marker>
       )}
     </Map>
   );

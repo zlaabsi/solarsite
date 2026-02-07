@@ -4,7 +4,7 @@ export function calculateShadowPolygons(
   solarAzimuthDeg,
   panelHeightM,
   panelTiltDeg,
-  latitude = 23.7
+  latitude = 0
 ) {
   if (solarElevationDeg <= 0) return [];
 

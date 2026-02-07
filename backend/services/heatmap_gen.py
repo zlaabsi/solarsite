@@ -20,8 +20,10 @@ def generate_seasonal_heatmaps(
     nx = max(int(width_m / resolution_m), 10)
     ny = max(int(height_m / resolution_m), 10)
 
-    summer_months = [6, 7, 8]
-    winter_months = [12, 1, 2]
+    if latitude >= 0:
+        summer_months, winter_months = [6, 7, 8], [12, 1, 2]
+    else:
+        summer_months, winter_months = [12, 1, 2], [6, 7, 8]
 
     pvgis_summer = pvgis_data[pvgis_data.index.month.isin(summer_months)]
     pvgis_winter = pvgis_data[pvgis_data.index.month.isin(winter_months)]

@@ -591,7 +591,7 @@ export default function LandingPage({ onLaunch }) {
         <div
           style={{
             position: "absolute",
-            bottom: -20,
+            bottom: -80,
             left: 0,
             right: 0,
             display: "flex",
@@ -603,11 +603,12 @@ export default function LandingPage({ onLaunch }) {
           <span
             style={{
               fontFamily: SERIF,
-              fontSize: 280,
+              fontSize: 360,
               fontWeight: 400,
               color: "#1c1c1c",
               lineHeight: 0.82,
               letterSpacing: -4,
+              marginBottom: "0.16em",
               opacity: footerInView ? 0.85 : 0,
               transform: footerInView ? "scale(1) translateY(0)" : "scale(0.92) translateY(30px)",
               transition: "opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1), transform 0.9s cubic-bezier(0.16, 1, 0.3, 1)",

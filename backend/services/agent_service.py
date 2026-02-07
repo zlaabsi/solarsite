@@ -25,20 +25,29 @@ from services.yield_calc import calculate_yield
 from services.heatmap_gen import generate_seasonal_heatmaps
 from services.openai_service import generate_solar_farm_render
 from services.fal_service import generate_3d_test, generate_3d_demo
+from services.geo_utils import lookup_timezone, classify_terrain, reverse_geocode
+from services.shadow_calc import compute_seasonal_shadow_losses
 
 
-AGENT_SYSTEM_PROMPT = (
-    "You are SolarSite AI, an autonomous solar farm site assessment agent.\n"
-    "Your mission: perform a complete solar farm assessment for the given location.\n\n"
-    "Execute these steps IN ORDER:\n"
-    "1. Use select_zone to define an optimal rectangular zone at the coordinates.\n"
-    "2. Use run_solar_analysis with the polygon_coordinates from step 1.\n"
-    "3. Use generate_3d_visualization with the n_panels count from step 2.\n"
-    "4. Provide a brief expert summary with key findings and recommendations.\n\n"
-    "Location context: Dakhla, Morocco - flat Saharan desert near the Atlantic coast, "
-    "excellent solar resource (~2150 kWh/m2 GHI annually).\n"
-    "Execute ALL 3 tools. Be concise."
-)
+def _build_system_prompt(latitude: float, longitude: float) -> str:
+    """Generate a dynamic system prompt based on coordinates."""
+    lat_dir = "N" if latitude >= 0 else "S"
+    lon_dir = "E" if longitude >= 0 else "W"
+    hemisphere = "northern" if latitude >= 0 else "southern"
+    location_name = reverse_geocode(latitude, longitude)
+    return (
+        "You are SolarSite AI, an autonomous solar farm site assessment agent.\n"
+        "Your mission: perform a complete solar farm assessment for the given location.\n\n"
+        "Execute these steps IN ORDER:\n"
+        "1. Use select_zone to define an optimal rectangular zone at the coordinates.\n"
+        "2. Use run_solar_analysis with the polygon_coordinates from step 1.\n"
+        "3. Use generate_3d_visualization with the n_panels count from step 2.\n"
+        "4. Provide a brief expert summary with key findings and recommendations.\n\n"
+        f"Location context: {location_name} — "
+        f"{abs(latitude):.4f}\u00b0{lat_dir}, {abs(longitude):.4f}\u00b0{lon_dir} "
+        f"({hemisphere} hemisphere).\n"
+        "Execute ALL 3 tools. Be concise."
+    )
 
 
 class SolarAgent:
@@ -196,12 +205,14 @@ class SolarAgent:
 
                 n_years = len(pvgis_data.index.year.unique())
 
+                seasonal = compute_seasonal_shadow_losses(shadow_matrix, latitude)
+
                 full_result = {
                     "site_info": {
                         "latitude": latitude,
                         "longitude": longitude,
                         "altitude_m": float(elevation),
-                        "timezone": "Africa/Casablanca",
+                        "timezone": lookup_timezone(latitude, longitude),
                         "polygon_area_m2": round(
                             polygon.area
                             * 111320
@@ -209,7 +220,8 @@ class SolarAgent:
                             * np.cos(np.radians(latitude)),
                             1,
                         ),
-                        "terrain_classification": "flat_desert",
+                        "terrain_classification": classify_terrain(float(elevation)),
+                        "location_name": reverse_geocode(latitude, longitude),
                     },
                     "layout": {
                         "panels_geojson": layout,
@@ -240,8 +252,8 @@ class SolarAgent:
                         "annual_shadow_loss_pct": float(
                             yield_info["shadow_loss_pct"]
                         ),
-                        "winter_solstice_shadow_loss_pct": 5.1,
-                        "summer_solstice_shadow_loss_pct": 0.3,
+                        "winter_solstice_shadow_loss_pct": seasonal["winter_shadow_loss_pct"],
+                        "summer_solstice_shadow_loss_pct": seasonal["summer_shadow_loss_pct"],
                         "shadow_matrix": "",
                         "optimal_spacing_m": row_spacing_m,
                         "shadow_timestamps": [],
@@ -307,8 +319,8 @@ class SolarAgent:
         @tool
         async def generate_3d_visualization(
             n_panels: int,
-            latitude: float = 23.7145,
-            longitude: float = -15.9369,
+            latitude: float = 0.0,
+            longitude: float = 0.0,
         ) -> str:
             """Generate a 3D model of the solar farm.
 
@@ -326,8 +338,7 @@ class SolarAgent:
             try:
                 text_prompt = (
                     f"Aerial view of a large ground-mounted solar farm with "
-                    f"approximately {n_panels} photovoltaic panels on flat "
-                    f"Saharan desert terrain near the Atlantic ocean, "
+                    f"approximately {n_panels} photovoltaic panels on flat terrain, "
                     f"clear blue sky, realistic lighting"
                 )
 
@@ -352,7 +363,14 @@ class SolarAgent:
                     }
 
                 agent_ref.model_3d_data = result
-                return json.dumps(result)
+                # Return a summary to the LLM — NOT the full base64
+                # data URIs, which can be millions of tokens.
+                return json.dumps({
+                    "status": "success",
+                    "model_glb_url": result["model_glb_url"],
+                    "thumbnail_url": result["thumbnail_url"],
+                    "note": "3D model generated successfully. URLs available for frontend.",
+                })
             except Exception as e:
                 logger.error(f"generate_3d_visualization failed: {e}")
                 return json.dumps({"error": str(e)})
@@ -375,13 +393,13 @@ class SolarAgent:
 
         llm = ChatOpenAI(model="gpt-5-mini")
         agent = create_react_agent(
-            llm, tools, prompt=AGENT_SYSTEM_PROMPT,
+            llm, tools, prompt=_build_system_prompt(latitude, longitude),
             recursion_limit=12,
         )
 
         user_message = (
             f"Perform a complete solar farm site assessment at coordinates "
-            f"({latitude}, {longitude}) in Dakhla, Morocco. "
+            f"({latitude}, {longitude}). "
             f"Select a zone of approximately {area_hectares} hectares, "
             f"then run the full solar analysis and generate a 3D model."
         )

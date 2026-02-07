@@ -7,9 +7,10 @@ from services.solar_engine import (
     get_tilted_irradiance,
 )
 from services.panel_layout import generate_panel_layout
-from services.shadow_calc import calculate_shadow_matrix
+from services.shadow_calc import calculate_shadow_matrix, compute_seasonal_shadow_losses
 from services.yield_calc import calculate_yield
 from services.heatmap_gen import generate_seasonal_heatmaps
+from services.geo_utils import lookup_timezone, classify_terrain, reverse_geocode
 import base64
 import numpy as np
 
@@ -60,6 +61,11 @@ async def analyze(req: AnalyzeRequest):
         n_panels=layout["properties"]["n_panels"],
         module_power_wc=req.module_power_wc,
         system_loss_pct=req.system_loss_pct,
+        capex_eur_per_wc=req.capex_eur_per_wc,
+        opex_eur_per_kwc_year=req.opex_eur_per_kwc_year,
+        wacc=req.wacc,
+        lifetime_years=req.lifetime_years,
+        co2_factor_t_per_mwh=req.co2_factor_t_per_mwh,
     )
 
     shadow_np = shadow_matrix.to_numpy().astype(np.float32)
@@ -74,16 +80,19 @@ async def analyze(req: AnalyzeRequest):
 
     n_years = len(pvgis_data.index.year.unique())
 
+    seasonal = compute_seasonal_shadow_losses(shadow_matrix, req.latitude)
+
     response = {
         "site_info": {
             "latitude": req.latitude,
             "longitude": req.longitude,
             "altitude_m": float(elevation),
-            "timezone": "Africa/Casablanca",
+            "timezone": lookup_timezone(req.latitude, req.longitude),
             "polygon_area_m2": round(
                 polygon.area * 111320 * 111320 * np.cos(np.radians(req.latitude)), 1
             ),
-            "terrain_classification": "flat_desert",
+            "terrain_classification": classify_terrain(float(elevation)),
+            "location_name": reverse_geocode(req.latitude, req.longitude),
         },
         "layout": {
             "panels_geojson": layout,
@@ -112,8 +121,8 @@ async def analyze(req: AnalyzeRequest):
         },
         "shadow_analysis": {
             "annual_shadow_loss_pct": float(yield_info["shadow_loss_pct"]),
-            "winter_solstice_shadow_loss_pct": 5.1,
-            "summer_solstice_shadow_loss_pct": 0.3,
+            "winter_solstice_shadow_loss_pct": seasonal["winter_shadow_loss_pct"],
+            "summer_solstice_shadow_loss_pct": seasonal["summer_shadow_loss_pct"],
             "shadow_matrix": shadow_b64,
             "optimal_spacing_m": req.row_spacing_m,
             "shadow_timestamps": [

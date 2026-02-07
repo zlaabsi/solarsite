@@ -9,6 +9,11 @@ def calculate_yield(
     module_power_wc: float,
     system_loss_pct: float = 14,
     temp_coefficient: float = -0.0035,
+    capex_eur_per_wc: float = 0.6,
+    opex_eur_per_kwc_year: float = 10.0,
+    wacc: float = 0.06,
+    lifetime_years: int = 25,
+    co2_factor_t_per_mwh: float = 0.47,
 ) -> dict:
     installed_capacity_wc = n_panels * module_power_wc
     installed_capacity_kwc = installed_capacity_wc / 1000
@@ -58,17 +63,15 @@ def calculate_yield(
     else:
         shadow_loss_pct = 0
 
-    capex_eur = installed_capacity_wc * 0.6 / 1000 * 1000
-    opex_annual_eur = installed_capacity_kwc * 10
-    wacc = 0.06
-    lifetime = 25
-    annuity_factor = (wacc * (1 + wacc) ** lifetime) / (
-        (1 + wacc) ** lifetime - 1
+    capex_eur = installed_capacity_wc * capex_eur_per_wc / 1000 * 1000
+    opex_annual_eur = installed_capacity_kwc * opex_eur_per_kwc_year
+    annuity_factor = (wacc * (1 + wacc) ** lifetime_years) / (
+        (1 + wacc) ** lifetime_years - 1
     )
     annual_cost = capex_eur * annuity_factor + opex_annual_eur
     lcoe = (annual_cost / annual_yield_mwh) if annual_yield_mwh > 0 else 0
 
-    co2_avoided = annual_yield_mwh * 0.47
+    co2_avoided = annual_yield_mwh * co2_factor_t_per_mwh
 
     return {
         "installed_capacity_kwc": round(installed_capacity_kwc, 1),
