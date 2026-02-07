@@ -2,8 +2,8 @@ import base64
 import json
 from openai import AsyncOpenAI
 
-MODEL_VISION = "gpt-4.1-mini"
-MODEL_TEXT = "gpt-4.1-mini"
+MODEL_VISION = "gpt-5-mini"
+MODEL_VOICE = "gpt-5-nano"
 
 
 async def analyze_terrain_image(image_bytes: bytes, lat: float, lon: float) -> dict:
@@ -12,6 +12,7 @@ async def analyze_terrain_image(image_bytes: bytes, lat: float, lon: float) -> d
 
     response = await client.responses.create(
         model=MODEL_VISION,
+        reasoning={"effort": "low"},
         input=[
             {
                 "role": "system",
@@ -64,7 +65,8 @@ async def generate_solar_farm_render(prompt: str) -> str:
 async def generate_voice_response(user_text: str, analysis_data: dict) -> dict:
     client = AsyncOpenAI()
     response = await client.responses.create(
-        model=MODEL_TEXT,
+        model=MODEL_VOICE,
+        reasoning={"effort": "low"},
         input=[
             {
                 "role": "system",

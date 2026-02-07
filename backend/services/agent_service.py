@@ -357,7 +357,7 @@ class SolarAgent:
         """Run the agent and yield SSE-compatible event dicts."""
         tools = self._make_tools()
 
-        llm = ChatOpenAI(model="gpt-4.1-mini", temperature=0)
+        llm = ChatOpenAI(model="gpt-5-mini", temperature=0)
         agent = create_react_agent(llm, tools, prompt=AGENT_SYSTEM_PROMPT)
 
         user_message = (
