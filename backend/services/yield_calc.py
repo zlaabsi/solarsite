@@ -25,7 +25,7 @@ def calculate_yield(
 
     if shadow_matrix is not None and not shadow_matrix.empty:
         avg_shadow = shadow_matrix.mean(axis=1)
-        avg_shadow = avg_shadow.reindex(poa.index, method="nearest", fill_value=0)
+        avg_shadow = avg_shadow.reindex(poa.index).interpolate(method="nearest").fillna(0)
         effective_irradiance = poa * (1 - avg_shadow)
     else:
         effective_irradiance = poa
