@@ -12,13 +12,30 @@ from services.yield_calc import calculate_yield
 from services.heatmap_gen import generate_seasonal_heatmaps
 from services.geo_utils import lookup_timezone, classify_terrain, reverse_geocode
 import base64
+import math
 import numpy as np
 
 router = APIRouter()
 
 
+def _sanitize(obj):
+    """Replace NaN/Inf floats with 0 so JSON serialization never fails."""
+    if isinstance(obj, float):
+        return 0.0 if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize(v) for v in obj]
+    if isinstance(obj, np.floating):
+        v = float(obj)
+        return 0.0 if (math.isnan(v) or math.isinf(v)) else v
+    if isinstance(obj, np.integer):
+        return int(obj)
+    return obj
+
+
 @router.post("/api/analyze", response_model=AnalyzeResponse)
-async def analyze(req: AnalyzeRequest):
+def analyze(req: AnalyzeRequest):
     polygon = Polygon(req.polygon_geojson.coordinates[0])
 
     solpos = get_solar_positions(req.latitude, req.longitude)
@@ -152,4 +169,4 @@ async def analyze(req: AnalyzeRequest):
         },
     }
 
-    return response
+    return _sanitize(response)

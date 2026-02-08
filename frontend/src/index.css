@@ -200,3 +200,186 @@ html {
 .vertical-text-down {
   writing-mode: vertical-rl;
 }
+
+/* ═══════════════════════════════════════
+   OPERATIONS PAGE — Solar Command Center
+   ═══════════════════════════════════════ */
+
+.ops-root {
+  --bg: #f0ebe0;
+  --black: #1a1a1a;
+  --accent: #e05438;
+}
+
+/* ─── Blueprint grid on beige ─── */
+.ops-blueprint {
+  background-image:
+    linear-gradient(rgba(26,26,26,0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(26,26,26,0.04) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+/* ─── Entrance: slide down ─── */
+@keyframes ops-slideDown {
+  from { opacity: 0; transform: translateY(-16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes ops-slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Hero text: clip reveal left-to-right ─── */
+@keyframes ops-textReveal {
+  from { clip-path: inset(0 100% 0 0); opacity: 0.3; }
+  to   { clip-path: inset(0 0% 0 0); opacity: 1; }
+}
+
+/* ─── Horizontal scan line — thicker, with glow ─── */
+@keyframes ops-scanLine {
+  0%   { top: -1%; opacity: 0; }
+  5%   { opacity: 1; }
+  85%  { opacity: 0.5; }
+  100% { top: 100%; opacity: 0; }
+}
+
+/* ─── Log line appearance ─── */
+@keyframes ops-logFlash {
+  0%   { opacity: 0; transform: translateX(-6px); }
+  40%  { opacity: 1; transform: translateX(0); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+/* ─── Counter digit rise ─── */
+@keyframes ops-digitReveal {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Status dot pulse ─── */
+@keyframes ops-statusPulse {
+  0%, 100% { opacity: 1; text-shadow: 0 0 4px rgba(34,197,94,0.4); }
+  50%      { opacity: 0.4; text-shadow: 0 0 10px rgba(34,197,94,0.7); }
+}
+
+/* ─── Sub-header spread ─── */
+@keyframes ops-spreadCenter {
+  from { opacity: 0; letter-spacing: 0.3em; }
+  to   { opacity: 1; letter-spacing: 0.1em; }
+}
+
+/* ─── Scale in ─── */
+@keyframes ops-scaleIn {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ─── Border draw ─── */
+@keyframes ops-drawBorder {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+/* ─── Irradiance waveform draw ─── */
+@keyframes ops-waveDraw {
+  from { stroke-dashoffset: 600; }
+  to   { stroke-dashoffset: 0; }
+}
+
+/* ─── Sun dot travel along arc ─── */
+@keyframes ops-sunTravel {
+  0%   { offset-distance: 0%; opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { offset-distance: 100%; opacity: 0.3; }
+}
+
+/* ─── Bracket breathe ─── */
+@keyframes ops-bracketBreathe {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
+}
+
+/* ── Utility classes ── */
+
+.ops-boot         { opacity: 0; animation: ops-slideDown 0.55s cubic-bezier(0.22,1,0.36,1) both; }
+.ops-boot-up      { opacity: 0; animation: ops-slideUp 0.55s cubic-bezier(0.22,1,0.36,1) both; }
+.ops-text-reveal  { opacity: 0; animation: ops-textReveal 0.7s cubic-bezier(0.22,1,0.36,1) both; }
+.ops-log-line     { opacity: 0; animation: ops-logFlash 0.35s cubic-bezier(0.22,1,0.36,1) both; }
+.ops-digit        { opacity: 0; animation: ops-digitReveal 0.45s cubic-bezier(0.22,1,0.36,1) both; }
+.ops-spread       { opacity: 0; animation: ops-spreadCenter 0.7s cubic-bezier(0.22,1,0.36,1) both; }
+.ops-scale-in     { opacity: 0; animation: ops-scaleIn 0.6s cubic-bezier(0.22,1,0.36,1) both; }
+.ops-draw-border  { transform-origin: left; animation: ops-drawBorder 0.7s cubic-bezier(0.22,1,0.36,1) both; }
+
+.ops-status-dot {
+  animation: ops-statusPulse 2.5s ease-in-out infinite;
+}
+
+.ops-bracket-breathe .absolute {
+  animation: ops-bracketBreathe 3s ease-in-out infinite;
+}
+
+/* Scan line overlay — coral glow */
+.ops-scan-line::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent 5%, #e05438 25%, #e05438cc 50%, #e05438 75%, transparent 95%);
+  box-shadow: 0 0 12px rgba(224,84,56,0.5), 0 0 4px rgba(224,84,56,0.8);
+  animation: ops-scanLine 2s cubic-bezier(0.22,1,0.36,1) 0.2s both;
+  pointer-events: none;
+  z-index: 50;
+}
+
+/* CTA button */
+.ops-cta-btn {
+  transition: background 0.2s cubic-bezier(0.22,1,0.36,1), transform 0.12s cubic-bezier(0.22,1,0.36,1), box-shadow 0.25s;
+}
+.ops-cta-btn:hover {
+  background: #c94830 !important;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(224,84,56,0.35);
+}
+.ops-cta-btn:active {
+  transform: translateY(0) scale(0.97);
+  box-shadow: 0 2px 8px rgba(224,84,56,0.2);
+}
+
+/* Nav link hover */
+.ops-nav-link {
+  position: relative;
+  transition: color 0.2s;
+  cursor: pointer;
+}
+.ops-nav-link::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  height: 1.5px;
+  background: #e05438;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s cubic-bezier(0.22,1,0.36,1);
+}
+.ops-nav-link:hover::after {
+  transform: scaleX(1);
+}
+.ops-nav-link:hover {
+  color: #e05438;
+}
+
+/* Irradiance wave SVG */
+.ops-wave-path {
+  stroke-dasharray: 600;
+  stroke-dashoffset: 600;
+  animation: ops-waveDraw 2.5s cubic-bezier(0.22,1,0.36,1) both;
+}
+.ops-wave-fill {
+  opacity: 0;
+  animation: ops-digitReveal 1s cubic-bezier(0.22,1,0.36,1) both;
+}

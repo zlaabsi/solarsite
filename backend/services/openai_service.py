@@ -76,6 +76,39 @@ async def generate_solar_farm_render(prompt: str) -> str:
         raise RuntimeError(f"Image generation failed: {e}") from e
 
 
+async def generate_contextual_render(map_screenshot_b64: str, n_panels: int) -> str:
+    """Edit the satellite screenshot to add solar panels. Returns data URI."""
+    import io
+
+    try:
+        client = AsyncOpenAI()
+        img_bytes = base64.b64decode(map_screenshot_b64)
+        img_file = io.BytesIO(img_bytes)
+        img_file.name = "screenshot.png"
+
+        prompt = (
+            f"Transform this satellite aerial view into a photorealistic render of a solar farm. "
+            f"Add approximately {n_panels} ground-mounted photovoltaic panels arranged in neat rows "
+            f"on this terrain. Keep the surrounding landscape visible. Realistic lighting, sharp detail."
+        )
+
+        result = await client.images.edit(
+            model="gpt-image-1.5",
+            image=img_file,
+            prompt=prompt,
+            size="1024x1024",
+        )
+        image = result.data[0]
+        if image.url:
+            return image.url
+        if image.b64_json:
+            return f"data:image/png;base64,{image.b64_json}"
+        raise ValueError("No image data in response")
+    except Exception as e:
+        logger.error(f"Contextual render failed: {e}")
+        raise
+
+
 async def generate_voice_response(user_text: str, analysis_data: dict) -> dict:
     client = AsyncOpenAI()
     response = await client.responses.create(

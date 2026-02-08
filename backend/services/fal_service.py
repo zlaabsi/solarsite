@@ -26,12 +26,13 @@ def generate_3d_test(image_url: str) -> dict:
 
 
 def generate_3d_demo(prompt: str) -> dict:
-    """Demo mode: Hunyuan 3D v3.1 Rapid text-to-3D ($0.225) — skip image gen."""
+    """Demo mode: Hunyuan3D v3 text-to-3D — returns textured GLB."""
     try:
         result = fal_client.subscribe(
-            "fal-ai/hunyuan-3d/v3.1/rapid/text-to-3d",
+            "fal-ai/hunyuan3d-v3/text-to-3d",
             arguments={
                 "prompt": prompt[:200],
+                "enable_pbr": True,
             },
         )
 

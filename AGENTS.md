@@ -2,35 +2,37 @@
 
 ## Overview
 
-SolarSite uses a **LangGraph ReAct agent** that autonomously performs a complete solar farm site assessment. No manual interaction required — the agent selects a zone, runs analysis, and generates a 3D model.
+SolarSite uses a **LangGraph ReAct agent** that autonomously performs a complete solar farm site assessment. The agent selects a zone and runs analysis. 3D generation is handled separately by the frontend after analysis completes, using a MapLibre screenshot for contextual rendering.
 
 ## Architecture
 
 ```
-Frontend (useAgent.js)          Backend (agent_service.py)
-       │                               │
-       │  POST /api/agent/run          │
-       │──────────────────────────────>│
+Frontend (useAgent.js)          Backend (agent_service.py)        Frontend (AppView)
+       │                               │                                │
+       │  POST /api/agent/run          │                                │
+       │──────────────────────────────>│                                │
        │                               │  create_react_agent(gpt-5-mini, tools)
-       │                               │
-       │  SSE: tool_start              │  ┌─────────────────┐
-       │<──────────────────────────────│  │  select_zone     │
-       │  SSE: polygon                 │  │  (Shapely box)   │
-       │<──────────────────────────────│  └─────────────────┘
-       │                               │
-       │  SSE: tool_start              │  ┌─────────────────────────┐
-       │<──────────────────────────────│  │  run_solar_analysis      │
-       │                               │  │  PVGIS + layout + shadow │
-       │  SSE: analysis                │  │  + yield + heatmaps      │
-       │<──────────────────────────────│  └─────────────────────────┘
-       │                               │
-       │  SSE: tool_start              │  ┌──────────────────────────────┐
-       │<──────────────────────────────│  │  generate_3d_visualization    │
-       │                               │  │  test: GPT-Image-1.5 → SAM 3D│
-       │  SSE: model_3d               │  │  demo: Hunyuan 3D text-to-3D  │
-       │<──────────────────────────────│  └──────────────────────────────┘
-       │  SSE: done                    │
-       │<──────────────────────────────│
+       │                               │                                │
+       │  SSE: tool_start              │  ┌─────────────────┐          │
+       │<──────────────────────────────│  │  select_zone     │          │
+       │  SSE: polygon                 │  │  (Shapely box)   │          │
+       │<──────────────────────────────│  └─────────────────┘          │
+       │                               │                                │
+       │  SSE: tool_start              │  ┌─────────────────────────┐  │
+       │<──────────────────────────────│  │  run_solar_analysis      │  │
+       │                               │  │  PVGIS + layout + shadow │  │
+       │  SSE: analysis                │  │  + yield + heatmaps      │  │
+       │<──────────────────────────────│  └─────────────────────────┘  │
+       │  SSE: done                    │                                │
+       │<──────────────────────────────│                                │
+       │                               │                                │  1.5s delay (map renders)
+       │                               │                                │  MapLibre screenshot
+       │                               │  POST /api/generate-3d         │
+       │                               │<──────────────────────────────│
+       │                               │  (screenshot + n_panels)       │
+       │                               │  GPT-Image-1.5 edit → SAM 3D  │
+       │                               │──────────────────────────────>│
+       │                               │  { model_glb_url }            │  Mini 3D viewer (sidebar)
 ```
 
 ## Agent Tools
@@ -48,14 +50,6 @@ Frontend (useAgent.js)          Backend (agent_service.py)
 - **SSE event**: `analysis` — frontend renders panels + dashboard
 - **Duration**: ~15-30s (PVGIS HTTP calls)
 
-### 3. `generate_3d_visualization`
-- **Input**: n_panels, latitude (required), longitude (required)
-- **Dual modes** (controlled by `mode` parameter):
-  - **test**: GPT-Image-1.5 render (1536x1024) → SAM 3D Objects image-to-3D ($0.02)
-  - **demo**: Hunyuan 3D v3.1 Rapid text-to-3D directly, skips image gen ($0.225)
-- **Output**: render_image_url, model_glb_url, thumbnail_url
-- **SSE event**: `model_3d` — frontend loads GLB in @google/model-viewer
-
 ## SSE Event Types
 
 | Event | Payload | Frontend action |
@@ -64,10 +58,21 @@ Frontend (useAgent.js)          Backend (agent_service.py)
 | `tool_start` | `{tool: "tool_name"}` | Add step with spinner |
 | `tool_result` | `{tool, result}` | (internal) |
 | `polygon` | `{data: GeoJSON}` | Render zone on map |
-| `analysis` | `{data: AnalysisResult}` | Render panels + KPIs |
-| `model_3d` | `{data: {model_glb_url, ...}}` | Switch to 3D tab |
+| `analysis` | `{data: AnalysisResult}` | Render panels + KPIs, trigger 3D generation |
 | `error` | `{message: "..."}` | Show error |
 | `done` | `{}` | Mark complete |
+
+## Post-Agent: Contextual 3D Generation
+
+After the agent completes and the map renders panels, the frontend automatically:
+1. Waits ~1.5s for MapLibre to finish rendering
+2. Captures a screenshot of the map via `MapView.captureScreenshot()` (uses `canvas.toDataURL()`)
+3. Sends the screenshot + `n_panels` to `POST /api/generate-3d` with `map_screenshot` field
+4. Backend uses `images.edit()` (GPT-Image-1.5) to add solar panels to the satellite screenshot
+5. SAM 3D Objects converts the edited image to a GLB 3D model
+6. The GLB is displayed in a mini 3D viewer at the bottom of the sidebar (320px × 220px)
+
+The map always stays visible — the 3D viewer never replaces the map view.
 
 ## Post-Agent: Interactive Zone Editing
 
@@ -133,6 +138,7 @@ All site data is derived dynamically from coordinates — no hardcoded location 
 - **Agent**: `create_react_agent` from `langgraph.prebuilt`
 - **Streaming**: `astream_events(version="v2")` for real-time SSE
 - **Sync tools**: LangGraph auto-handles thread pooling for sync tools (`select_zone`, `run_solar_analysis`)
-- **Async tools**: `generate_3d_visualization` is async, wraps sync `fal_client.subscribe` in `asyncio.to_thread()`
 - **State isolation**: Each request creates a new `SolarAgent` instance with its own result store
 - **Token safety**: Tool returns to LLM are compact summaries — full data (base64 images, GeoJSON, heatmaps) is stored in `agent_ref.*` and sent via SSE only, never injected into LLM context
+- **Map screenshot**: MapView exposes `captureScreenshot()` via `forwardRef`/`useImperativeHandle`, requires `preserveDrawingBuffer: true` on MapLibre Map component
+- **Contextual 3D**: `generate_contextual_render()` uses `images.edit()` with the satellite screenshot as base image

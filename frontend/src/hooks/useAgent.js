@@ -6,7 +6,6 @@ export default function useAgent() {
   const [steps, setSteps] = useState([]);
   const [polygon, setPolygon] = useState(null);
   const [analysisData, setAnalysisData] = useState(null);
-  const [model3D, setModel3D] = useState(null);
   const [thinking, setThinking] = useState("");
   const [error, setError] = useState(null);
   const abortRef = useRef(null);
@@ -17,7 +16,6 @@ export default function useAgent() {
       setSteps([]);
       setPolygon(null);
       setAnalysisData(null);
-      setModel3D(null);
       setThinking("");
       setError(null);
 
@@ -97,17 +95,6 @@ export default function useAgent() {
                   );
                   break;
 
-                case "model_3d":
-                  setModel3D(event.data);
-                  setSteps((prev) =>
-                    prev.map((s) =>
-                      s.tool === "generate_3d_visualization"
-                        ? { ...s, status: "done" }
-                        : s
-                    )
-                  );
-                  break;
-
                 case "error":
                   setError(event.message);
                   setAgentState("error");
@@ -144,7 +131,6 @@ export default function useAgent() {
     steps,
     polygon,
     analysisData,
-    model3D,
     thinking,
     error,
     runAgent,

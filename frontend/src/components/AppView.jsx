@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import useAgent from "../hooks/useAgent";
 import usePolygonEdit from "../hooks/usePolygonEdit";
 import useSolarAnalysis from "../hooks/useSolarAnalysis";
@@ -6,6 +6,7 @@ import MapView from "./MapView";
 import ModelViewer from "./ModelViewer";
 import ReportPanel from "./ReportPanel";
 import {
+  API_URL,
   DEFAULT_LAT,
   DEFAULT_LON,
   DEFAULT_PANEL_TILT_DEG,
@@ -152,18 +153,20 @@ export default function AppView({ onBack }) {
     steps,
     polygon,
     analysisData,
-    model3D,
     thinking,
     error,
     runAgent,
     stopAgent,
   } = useAgent();
 
-  const [mode, setMode] = useState("test");
+  const [mode, setMode] = useState("demo");
   const [hour, setHour] = useState(12);
   const [month, setMonth] = useState(6);
-  const [showModel, setShowModel] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [model3DUrl, setModel3DUrl] = useState(null);
+  const [model3DLoading, setModel3DLoading] = useState(false);
+  const [renderImageUrl, setRenderImageUrl] = useState(null);
+  const mapViewRef = useRef(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [heatmapSeason, setHeatmapSeason] = useState("summer");
   const [isDrawing, setIsDrawing] = useState(false);
@@ -179,7 +182,13 @@ export default function AppView({ onBack }) {
   const [reAnalyzing, setReAnalyzing] = useState(false);
 
   const effectivePolygon = polygonOverride || drawnPolygon || polygon;
-  const effectiveAnalysis = analysisOverride || analysisData;
+  const effectiveAnalysis = useMemo(
+    () => analysisOverride || analysisData,
+    [analysisOverride, analysisData]
+  );
+
+  // Ref-based guard: prevents stale closure issues in the async 3D generation
+  const generating3DRef = useRef(false);
 
   const {
     editPolygon,
@@ -205,14 +214,90 @@ export default function AppView({ onBack }) {
       setPolygonOverride(null);
       setAnalysisOverride(null);
       setReAnalyzing(false);
+      setModel3DUrl(null);
+      setModel3DLoading(false);
+      setRenderImageUrl(null);
+      generating3DRef.current = false;
     }
   }, [agentState]);
+
+  // Auto-trigger 3D generation after analysis completes
+  const trigger3DGeneration = useCallback(async (data) => {
+    if (generating3DRef.current) return;
+    generating3DRef.current = true;
+    setModel3DLoading(true);
+
+    console.log("[3D] Auto-trigger: n_panels =", data.layout.n_panels);
+
+    // Wait for map to render panels
+    await new Promise((r) => setTimeout(r, 2000));
+
+    console.log("[3D] Capturing map screenshot...");
+    let screenshot = null;
+    try {
+      screenshot = await mapViewRef.current?.captureScreenshot();
+    } catch (err) {
+      console.error("[3D] Screenshot capture threw:", err);
+    }
+
+    if (!screenshot) {
+      console.warn("[3D] Screenshot null — proceeding without screenshot");
+    } else {
+      console.log("[3D] Screenshot captured:", screenshot.length, "chars");
+    }
+
+    try {
+      const payload = {
+        latitude: data.site_info.latitude,
+        longitude: data.site_info.longitude,
+        n_panels: data.layout.n_panels,
+        render_type: mode,
+        ...(screenshot && { map_screenshot: screenshot }),
+      };
+      console.log("[3D] POST /api/generate-3d — render_type:", mode, "has_screenshot:", !!screenshot);
+
+      const res = await fetch(`${API_URL}/api/generate-3d`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error("[3D] Backend error:", res.status, errText);
+        return;
+      }
+
+      const result = await res.json();
+      console.log("[3D] Success — GLB URL:", result.model_glb_url?.slice(0, 80));
+      if (result.model_glb_url) {
+        setModel3DUrl(result.model_glb_url);
+      }
+      if (result.render_image_url) setRenderImageUrl(result.render_image_url);
+    } catch (e) {
+      console.error("[3D] Generation failed:", e);
+    } finally {
+      setModel3DLoading(false);
+      generating3DRef.current = false;
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    const data = effectiveAnalysis;
+    if (!data?.layout?.n_panels) return;
+    if (generating3DRef.current || model3DUrl) return;
+    trigger3DGeneration(data);
+  }, [effectiveAnalysis, trigger3DGeneration, model3DUrl]);
 
   const handleApplyEdit = async () => {
     const result = commitEdit();
     if (!result) return;
     const { polygon: newPolygon, azimuthDeg } = result;
     setPolygonOverride(newPolygon);
+    setModel3DUrl(null);
+    setModel3DLoading(false);
+    setRenderImageUrl(null);
+    generating3DRef.current = false;
     setReAnalyzing(true);
     try {
       const analysis = await analyze({
@@ -239,6 +324,10 @@ export default function AppView({ onBack }) {
   const handleLaunch = async () => {
     if (hasDrawnPolygon) {
       // Direct analysis with user-drawn polygon (skip agent)
+      setModel3DUrl(null);
+      setModel3DLoading(false);
+      setRenderImageUrl(null);
+      generating3DRef.current = false;
       setReAnalyzing(true);
       try {
         const analysis = await analyze({
@@ -296,19 +385,29 @@ export default function AppView({ onBack }) {
   const locationName = effectiveAnalysis?.site_info?.location_name || "";
 
   const ghi = effectiveAnalysis?.solar_data?.annual_ghi_kwh_m2 ?? FALLBACK_GHI_KWH_M2_YEAR;
+  const dni = effectiveAnalysis?.solar_data?.annual_dni_kwh_m2;
   const lcoe = effectiveAnalysis?.yield_info?.lcoe_eur_mwh;
   const panels = effectiveAnalysis?.layout?.n_panels;
   const capacity = effectiveAnalysis?.yield_info?.installed_capacity_mwc;
   const annualYield = effectiveAnalysis?.yield_info?.annual_yield_kwh;
+  const specificYield = effectiveAnalysis?.yield_info?.specific_yield_kwh_kwp;
   const pr = effectiveAnalysis?.yield_info?.performance_ratio;
   const shadowLoss = effectiveAnalysis?.shadow_analysis?.annual_shadow_loss_pct;
+  const winterShadow = effectiveAnalysis?.shadow_analysis?.winter_solstice_shadow_loss_pct;
+  const summerShadow = effectiveAnalysis?.shadow_analysis?.summer_solstice_shadow_loss_pct;
   const co2 = effectiveAnalysis?.yield_info?.co2_avoided_tons_yr;
+  const altitude = effectiveAnalysis?.site_info?.altitude_m;
+  const timezone = effectiveAnalysis?.site_info?.timezone;
+  const terrain = effectiveAnalysis?.site_info?.terrain_classification;
+  const avgTemp = effectiveAnalysis?.solar_data?.avg_temp_c;
+  const avgWind = effectiveAnalysis?.solar_data?.avg_wind_speed_ms;
+  const gcr = effectiveAnalysis?.layout?.ground_coverage_ratio;
+  const nRows = effectiveAnalysis?.layout?.n_rows;
 
   /* System log */
   const toolLabels = {
     select_zone: "ZONE SELECT",
     run_solar_analysis: "SOLAR ANALYSIS",
-    generate_3d_visualization: "3D RENDER",
   };
 
   const defaultLog = [
@@ -427,13 +526,15 @@ export default function AppView({ onBack }) {
 
         {/* ───────── LEFT SIDEBAR (320px) ───────── */}
         <div
-          className="shrink-0 flex flex-col overflow-y-auto"
+          className="shrink-0 flex flex-col"
           style={{
             width: 320,
             background: "#f0ebe0",
             borderRight: "1px solid rgba(26,26,26,0.12)",
           }}
         >
+        {/* Scrollable sidebar content */}
+        <div className="flex-1 overflow-y-auto min-h-0">
           {/* Agent Controls */}
           <div className="px-3 py-3" style={{ borderBottom: "1px solid rgba(26,26,26,0.08)" }}>
             <div
@@ -537,17 +638,80 @@ export default function AppView({ onBack }) {
             onMonthChange={setMonth}
           />
 
+          {/* Site Intel (shown after analysis) */}
+          {hasAnalysis && (
+            <div className="px-3 py-3" style={{ borderBottom: "1px solid rgba(26,26,26,0.08)" }}>
+              <div
+                style={{
+                  fontSize: "9.5px",
+                  letterSpacing: "0.13em",
+                  textTransform: "uppercase",
+                  opacity: 0.45,
+                  marginBottom: 6,
+                }}
+              >
+                SITE INTEL
+              </div>
+              <div style={{ fontSize: "10.5px", lineHeight: 1.9, fontFamily: "inherit" }}>
+                {locationName && <div>■ {locationName}</div>}
+                {altitude != null && <div>■ ALT: {Math.round(altitude)} m</div>}
+                {terrain && <div>■ TERRAIN: {terrain.replace(/_/g, " ").toUpperCase()}</div>}
+                {timezone && <div>■ TZ: {timezone}</div>}
+                {avgTemp != null && <div>■ TEMP: {avgTemp}°C — WIND: {avgWind} m/s</div>}
+              </div>
+            </div>
+          )}
+
           {/* KPI Metrics (shown after analysis) */}
           {hasAnalysis && (
             <>
               <Metric label="Installed Capacity" value={capacity?.toFixed(2)} unit="MWc" accent />
               <Metric label="Annual Yield" value={annualYield?.toLocaleString()} unit="kWh/yr" />
+              <Metric label="Specific Yield" value={specificYield?.toFixed(0)} unit="kWh/kWp" />
               <Metric label="LCOE" value={lcoe?.toFixed(1)} unit="€/MWh" accent />
               <Metric label="Performance Ratio" value={`${(pr * 100).toFixed(1)}`} unit="%" />
-              <Metric label="Shadow Loss" value={shadowLoss?.toFixed(1)} unit="%" />
+              <Metric label="Panels" value={panels?.toLocaleString()} unit={`(${nRows} rows — GCR ${((gcr || 0) * 100).toFixed(0)}%)`} />
+              <Metric label="DNI" value={dni?.toFixed(0)} unit="kWh/m²/yr" />
               <Metric label="CO₂ Avoided" value={co2?.toFixed(0)} unit="t/yr" />
-              <Metric label="Panels" value={panels?.toLocaleString()} unit="" />
             </>
+          )}
+
+          {/* Season Shadow Comparison (shown after analysis) */}
+          {hasAnalysis && winterShadow != null && (
+            <div className="px-3 py-3" style={{ borderBottom: "1px solid rgba(26,26,26,0.08)" }}>
+              <div
+                style={{
+                  fontSize: "9.5px",
+                  letterSpacing: "0.13em",
+                  textTransform: "uppercase",
+                  opacity: 0.45,
+                  marginBottom: 8,
+                }}
+              >
+                SHADOW — SEASON COMPARE
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ flex: 1, padding: "8px", background: "rgba(26,26,26,0.04)", border: "1px solid rgba(26,26,26,0.08)" }}>
+                  <div style={{ fontSize: "9px", letterSpacing: "0.1em", textTransform: "uppercase", opacity: 0.4, marginBottom: 4 }}>
+                    SUMMER
+                  </div>
+                  <div style={{ fontSize: "18px", fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace", color: "#e05438" }}>
+                    {summerShadow?.toFixed(1)}%
+                  </div>
+                </div>
+                <div style={{ flex: 1, padding: "8px", background: "rgba(26,26,26,0.04)", border: "1px solid rgba(26,26,26,0.08)" }}>
+                  <div style={{ fontSize: "9px", letterSpacing: "0.1em", textTransform: "uppercase", opacity: 0.4, marginBottom: 4 }}>
+                    WINTER
+                  </div>
+                  <div style={{ fontSize: "18px", fontWeight: 700, fontFamily: "'IBM Plex Mono', monospace", color: "#1a1a1a" }}>
+                    {winterShadow?.toFixed(1)}%
+                  </div>
+                </div>
+              </div>
+              <div style={{ marginTop: 6, fontSize: "10px", opacity: 0.35 }}>
+                ANNUAL: {shadowLoss?.toFixed(1)}% LOSS
+              </div>
+            </div>
           )}
 
           {/* View toggles (shown after analysis) */}
@@ -633,32 +797,6 @@ export default function AppView({ onBack }) {
             </div>
           )}
 
-          {/* 3D Model toggle */}
-          {model3D?.model_glb_url && (
-            <div className="px-3 py-3" style={{ borderBottom: "1px solid rgba(26,26,26,0.08)" }}>
-              <Corners className="p-1">
-                <button
-                  onClick={() => setShowModel(!showModel)}
-                  style={{
-                    width: "100%",
-                    padding: "8px 12px",
-                    background: showModel ? "#1a1a1a" : "transparent",
-                    color: showModel ? "#f0ebe0" : "#1a1a1a",
-                    border: showModel ? "none" : "1px solid rgba(26,26,26,0.15)",
-                    cursor: "pointer",
-                    fontSize: "10.5px",
-                    fontFamily: "inherit",
-                    letterSpacing: "0.12em",
-                    textTransform: "uppercase",
-                    transition: "all 0.15s",
-                  }}
-                >
-                  {showModel ? "← BACK TO MAP" : "VIEW 3D MODEL"}
-                </button>
-              </Corners>
-            </div>
-          )}
-
           {/* Site Report Panel (expandable) */}
           {showReport && hasAnalysis && (
             <div
@@ -673,46 +811,57 @@ export default function AppView({ onBack }) {
             </div>
           )}
 
-          {/* Mini radar (decorative, bottom of sidebar) */}
-          <div className="flex-1 flex items-end justify-center px-6 py-4" style={{ minHeight: 120 }}>
-            <div style={{ width: 100, height: 100 }}>
-              <MiniRadar isActive={isRunning} />
-            </div>
+          </div>{/* end scrollable */}
+
+          {/* Mini 3D Viewer / Radar — sidebar bottom (fixed) */}
+          <div style={{
+            borderTop: "1px solid rgba(26,26,26,0.12)",
+            height: 220,
+            position: "relative",
+            background: "#F0EBE0",
+            flexShrink: 0,
+          }}>
+            {model3DLoading ? (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#999", fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", fontFamily: "'IBM Plex Mono', monospace" }}>
+                <span className="blink">GENERATING 3D MODEL...</span>
+              </div>
+            ) : model3DUrl ? (
+              <ModelViewer glbUrl={model3DUrl} compact />
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
+                <div style={{ width: 100, height: 100 }}>
+                  <MiniRadar isActive={isRunning} />
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* ───────── MAIN: MAP / 3D MODEL ───────── */}
+        {/* ───────── MAIN: MAP (always visible) ───────── */}
         <div className="flex-1 relative min-h-0">
 
-          {showModel && model3D?.model_glb_url ? (
-            /* 3D Model viewer — uses ModelViewer component which imports @google/model-viewer */
-            <div className="w-full h-full" style={{ background: "#111" }}>
-              <ModelViewer glbUrl={model3D.model_glb_url} />
-            </div>
-          ) : (
-            /* Satellite map */
-            <MapView
-              analysisData={effectiveAnalysis}
-              isDrawing={isDrawing}
-              drawingPoints={drawingPoints}
-              polygon={effectivePolygon}
-              onMapClick={handleMapClick}
-              hour={hour}
-              month={month}
-              is3D={is3D}
-              onToggle3D={() => setIs3D(!is3D)}
-              showHeatmap={showHeatmap}
-              heatmapSeason={heatmapSeason}
-              isEditing={isEditing}
-              editPolygon={editPolygon}
-              editCorners={editCorners}
-              editMode={currentEditMode}
-              isDragEditing={isDragEditing}
-              onEditPointerDown={handlePointerDown}
-              onEditPointerMove={handlePointerMove}
-              onEditPointerUp={handlePointerUp}
-            />
-          )}
+          <MapView
+            ref={mapViewRef}
+            analysisData={effectiveAnalysis}
+            isDrawing={isDrawing}
+            drawingPoints={drawingPoints}
+            polygon={effectivePolygon}
+            onMapClick={handleMapClick}
+            hour={hour}
+            month={month}
+            is3D={is3D}
+            onToggle3D={() => setIs3D(!is3D)}
+            showHeatmap={showHeatmap}
+            heatmapSeason={heatmapSeason}
+            isEditing={isEditing}
+            editPolygon={editPolygon}
+            editCorners={editCorners}
+            editMode={currentEditMode}
+            isDragEditing={isDragEditing}
+            onEditPointerDown={handlePointerDown}
+            onEditPointerMove={handlePointerMove}
+            onEditPointerUp={handlePointerUp}
+          />
 
           {/* ── Map overlay: STOP button when running ── */}
           {isRunning && (

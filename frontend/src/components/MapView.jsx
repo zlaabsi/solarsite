@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
 import Map, { Source, Layer, Marker } from "react-map-gl/maplibre";
 import { MapboxOverlay } from "@deck.gl/mapbox";
 import { useControl } from "react-map-gl/maplibre";
@@ -62,7 +62,7 @@ function DeckGLOverlay({ layers }) {
   return null;
 }
 
-export default function MapView({
+const MapView = forwardRef(function MapView({
   analysisData,
   isDrawing,
   drawingPoints,
@@ -83,9 +83,47 @@ export default function MapView({
   onEditPointerDown,
   onEditPointerMove,
   onEditPointerUp,
-}) {
+}, ref) {
   const [viewState, setViewState] = useState(INITIAL_VIEW_3D);
   const mapRef = useRef(null);
+
+  useImperativeHandle(ref, () => ({
+    captureScreenshot: () => {
+      const map = mapRef.current?.getMap();
+      if (!map) {
+        console.warn("[MapView] captureScreenshot: map not ready");
+        return Promise.resolve(null);
+      }
+
+      return new Promise((resolve) => {
+        // Safety timeout — resolve null if render event never fires
+        const timeout = setTimeout(() => {
+          console.warn("[MapView] captureScreenshot: render event timed out, trying direct capture");
+          try {
+            const canvas = map.getCanvas();
+            const dataUrl = canvas.toDataURL("image/png");
+            resolve(dataUrl.split(",")[1]);
+          } catch {
+            resolve(null);
+          }
+        }, 3000);
+
+        map.triggerRepaint();
+        map.once("render", () => {
+          clearTimeout(timeout);
+          try {
+            const canvas = map.getCanvas();
+            const dataUrl = canvas.toDataURL("image/png");
+            console.log("[MapView] Screenshot captured via render event");
+            resolve(dataUrl.split(",")[1]);
+          } catch (err) {
+            console.error("[MapView] toDataURL failed:", err);
+            resolve(null);
+          }
+        });
+      });
+    },
+  }));
 
   /* ─── Animate 2D/3D transitions ─── */
   useEffect(() => {
@@ -320,6 +358,7 @@ export default function MapView({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       mapStyle={SATELLITE_STYLE}
+      preserveDrawingBuffer={true}
       style={{ width: "100%", height: "100%" }}
       cursor={mapCursor}
       maxPitch={85}
@@ -466,7 +505,9 @@ export default function MapView({
       )}
     </Map>
   );
-}
+});
+
+export default MapView;
 
 /* ─── Helper: toggle terrain on/off ─── */
 function updateTerrain(map, enable) {

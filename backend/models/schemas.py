@@ -108,6 +108,7 @@ class Generate3DRequest(BaseModel):
     longitude: float
     n_panels: int
     render_type: Literal["test", "demo"] = "test"
+    map_screenshot: Optional[str] = None  # base64 PNG from MapLibre canvas
 
 
 class Generate3DResponse(BaseModel):

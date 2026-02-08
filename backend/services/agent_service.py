@@ -1,4 +1,3 @@
-import asyncio
 import json
 import uuid
 import logging
@@ -23,8 +22,6 @@ from services.panel_layout import generate_panel_layout
 from services.shadow_calc import calculate_shadow_matrix
 from services.yield_calc import calculate_yield
 from services.heatmap_gen import generate_seasonal_heatmaps
-from services.openai_service import generate_solar_farm_render
-from services.fal_service import generate_3d_test, generate_3d_demo
 from services.geo_utils import lookup_timezone, classify_terrain, reverse_geocode
 from services.shadow_calc import compute_seasonal_shadow_losses
 
@@ -41,12 +38,11 @@ def _build_system_prompt(latitude: float, longitude: float) -> str:
         "Execute these steps IN ORDER:\n"
         "1. Use select_zone to define an optimal rectangular zone at the coordinates.\n"
         "2. Use run_solar_analysis with the polygon_coordinates from step 1.\n"
-        "3. Use generate_3d_visualization with the n_panels count from step 2.\n"
-        "4. Provide a brief expert summary with key findings and recommendations.\n\n"
+        "3. Provide a brief expert summary with key findings and recommendations.\n\n"
         f"Location context: {location_name} — "
         f"{abs(latitude):.4f}\u00b0{lat_dir}, {abs(longitude):.4f}\u00b0{lon_dir} "
         f"({hemisphere} hemisphere).\n"
-        "Execute ALL 3 tools. Be concise."
+        "Execute ALL 2 tools. Be concise."
     )
 
 
@@ -57,7 +53,6 @@ class SolarAgent:
         self.mode = mode  # "test" (SAM $0.02) or "demo" (Hunyuan $0.225)
         self.polygon_data = None
         self.analysis_data = None
-        self.model_3d_data = None
 
     def _make_tools(self):
         agent_ref = self
@@ -316,66 +311,7 @@ class SolarAgent:
                 logger.error(f"run_solar_analysis failed: {e}")
                 return json.dumps({"error": str(e)})
 
-        @tool
-        async def generate_3d_visualization(
-            n_panels: int,
-            latitude: float = 0.0,
-            longitude: float = 0.0,
-        ) -> str:
-            """Generate a 3D model of the solar farm.
-
-            In test mode: GPT Image render then SAM 3D Objects reconstruction.
-            In demo mode: Hunyuan 3D text-to-3D directly (skips image generation).
-
-            Args:
-                n_panels: Number of panels in the farm.
-                latitude: Site latitude.
-                longitude: Site longitude.
-
-            Returns:
-                JSON with 3D model URLs.
-            """
-            try:
-                text_prompt = (
-                    f"Aerial view of a large ground-mounted solar farm with "
-                    f"approximately {n_panels} photovoltaic panels on flat terrain, "
-                    f"clear blue sky, realistic lighting"
-                )
-
-                if agent_ref.mode == "demo":
-                    model = await asyncio.to_thread(
-                        generate_3d_demo, text_prompt
-                    )
-                    result = {
-                        "render_image_url": "",
-                        "model_glb_url": model["model_glb_url"],
-                        "thumbnail_url": model["thumbnail_url"],
-                    }
-                else:
-                    render_url = await generate_solar_farm_render(text_prompt)
-                    model = await asyncio.to_thread(
-                        generate_3d_test, render_url
-                    )
-                    result = {
-                        "render_image_url": render_url,
-                        "model_glb_url": model["model_glb_url"],
-                        "thumbnail_url": model["thumbnail_url"],
-                    }
-
-                agent_ref.model_3d_data = result
-                # Return a summary to the LLM — NOT the full base64
-                # data URIs, which can be millions of tokens.
-                return json.dumps({
-                    "status": "success",
-                    "model_glb_url": result["model_glb_url"],
-                    "thumbnail_url": result["thumbnail_url"],
-                    "note": "3D model generated successfully. URLs available for frontend.",
-                })
-            except Exception as e:
-                logger.error(f"generate_3d_visualization failed: {e}")
-                return json.dumps({"error": str(e)})
-
-        return [select_zone, run_solar_analysis, generate_3d_visualization]
+        return [select_zone, run_solar_analysis]
 
     async def run_stream(
         self,
@@ -401,7 +337,7 @@ class SolarAgent:
             f"Perform a complete solar farm site assessment at coordinates "
             f"({latitude}, {longitude}). "
             f"Select a zone of approximately {area_hectares} hectares, "
-            f"then run the full solar analysis and generate a 3D model."
+            f"then run the full solar analysis."
         )
 
         config = {"configurable": {"thread_id": f"solar-{uuid.uuid4().hex[:12]}"}}
@@ -434,10 +370,5 @@ class SolarAgent:
                         yield {"type": "analysis", "data": self.analysis_data}
                     else:
                         yield {"type": "error", "message": "Solar analysis failed — no results generated"}
-                elif tool_name == "generate_3d_visualization":
-                    if self.model_3d_data:
-                        yield {"type": "model_3d", "data": self.model_3d_data}
-                    else:
-                        yield {"type": "error", "message": "3D visualization failed — no model generated"}
 
         yield {"type": "done"}
