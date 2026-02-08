@@ -4,6 +4,9 @@ AI-powered solar farm site assessment tool. Combines satellite imagery, photovol
 
 Built for the **{Tech: Europe} Paris 2026** hackathon.
 
+<img width="3456" height="2168" alt="image" src="https://github.com/user-attachments/assets/083a6db9-7ee0-4baa-9e12-4024733e1a8f" />
+
+
 ## What It Does
 
 1. **Autonomous Site Assessment** -- An AI agent selects an optimal zone and runs a complete solar analysis (irradiance, panel layout, shadows, energy yield, LCOE)
