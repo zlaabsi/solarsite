@@ -12,10 +12,15 @@ async def voice_ws(ws: WebSocket):
     await ws.accept()
     api_key = os.getenv("GRADIUM_API_KEY", "")
     analysis_data = {}
+    stt_only = False
 
     try:
         while True:
             msg = await ws.receive_json()
+
+            if msg.get("type") == "set_mode":
+                stt_only = msg.get("stt_only", False)
+                continue
 
             if msg.get("type") == "set_context":
                 analysis_data = msg.get("data", {})
@@ -48,19 +53,20 @@ async def voice_ws(ws: WebSocket):
                         api_key, single_chunk()
                     ):
                         await ws.send_json({"type": "transcript", "text": text})
-                        result = await generate_voice_response(
-                            text, analysis_data
-                        )
-                        await ws.send_json({"type": "response", **result})
-                        audio = await synthesize_speech(
-                            api_key, result.get("spoken_response", "")
-                        )
-                        await ws.send_json(
-                            {
-                                "type": "audio",
-                                "data": base64.b64encode(audio).decode("utf-8"),
-                            }
-                        )
+                        if not stt_only:
+                            result = await generate_voice_response(
+                                text, analysis_data
+                            )
+                            await ws.send_json({"type": "response", **result})
+                            audio = await synthesize_speech(
+                                api_key, result.get("spoken_response", "")
+                            )
+                            await ws.send_json(
+                                {
+                                    "type": "audio",
+                                    "data": base64.b64encode(audio).decode("utf-8"),
+                                }
+                            )
 
     except WebSocketDisconnect:
         pass

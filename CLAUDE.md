@@ -36,11 +36,13 @@ Requires `.env` files in `backend/` and `frontend/` — see `.env.example` at ro
 | `services/openai_service.py` | GPT-5-mini vision + GPT-5-nano voice + GPT-Image-1.5 rendering + contextual image editing |
 | `services/fal_service.py` | Dual 3D: SAM 3D Objects (test, $0.02) / Hunyuan 3D v3.1 (demo, $0.225) |
 | `services/gradium_service.py` | Gradium STT/TTS via WebSocket |
+| `services/chat_service.py` | GPT-5-mini multi-turn chat via Chat Completions API (streaming) |
 | `routers/agent.py` | `POST /api/agent/run` — SSE streaming endpoint |
 | `routers/analyze.py` | `POST /api/analyze` — direct analysis endpoint |
 | `routers/generate_3d.py` | `POST /api/generate-3d` — dual mode (test/demo), accepts map screenshot for contextual 3D |
 | `routers/image_analysis.py` | `POST /api/analyze-image` — terrain vision analysis |
-| `routers/voice.py` | `WS /ws/voice` — real-time STT/TTS |
+| `routers/chat.py` | `POST /api/chat` — multi-turn chat SSE endpoint |
+| `routers/voice.py` | `WS /ws/voice` — real-time STT/TTS (supports `stt_only` mode) |
 
 ### Frontend
 
@@ -62,10 +64,12 @@ Requires `.env` files in `backend/` and `frontend/` — see `.env.example` at ro
 | `src/components/PanelOverlay.jsx` | deck.gl PolygonLayer factory for solar panels |
 | `src/components/ShadowRenderer.jsx` | deck.gl shadow polygon layer factory |
 | `src/components/HeatmapLayer.jsx` | deck.gl heatmap layer (blue-to-red gradient) |
+| `src/components/ChatWidget.jsx` | Floating AI chat widget (text + voice input, action dispatch) |
 | `src/hooks/useAgent.js` | SSE client for LangGraph agent events |
 | `src/hooks/useSolarAnalysis.js` | Direct API calls (`/api/analyze`, `/api/generate-3d`, `/api/analyze-image`) |
 | `src/hooks/usePolygonEdit.js` | Polygon translate/resize/rotate with geometry math |
 | `src/hooks/useMapDraw.js` | Manual polygon drawing state (legacy) |
+| `src/hooks/useChat.js` | Chat state + SSE client + Gradium STT (stt_only mode) |
 | `src/hooks/useVoice.js` | WebSocket voice I/O (MediaRecorder + AudioContext) |
 | `src/utils/color-scales.js` | Irradiance-to-color gradient mapping |
 | `src/utils/shadow-geometry.js` | Shadow polygon calculation from solar position |
@@ -74,7 +78,7 @@ Requires `.env` files in `backend/` and `frontend/` — see `.env.example` at ro
 ## Key conventions
 
 - PVGIS returns POA components — `_add_derived_columns()` computes ghi/dni/poa_global
-- OpenAI uses the Responses API (not Chat Completions) with `reasoning={"effort": "low"}`
+- OpenAI agent/vision uses Responses API with `reasoning={"effort": "low"}`; chat service uses Chat Completions API (SDK v1.59.9 compatibility)
 - Gradium auth: `x-api-key` header (not Bearer)
 - Default map center: 23.7145, -15.9369 (configurable — all GIS data is derived dynamically from coordinates)
 - Timezone, terrain classification, and seasonal shadow losses are computed dynamically via geo_utils.py (timezonefinder + elevation-based classification)
@@ -86,3 +90,5 @@ Requires `.env` files in `backend/` and `frontend/` — see `.env.example` at ro
 - After agent analysis, the zone polygon can be edited (translate/resize/rotate) and re-analyzed via `POST /api/analyze`
 - Polygon edits use `effectivePolygon`/`effectiveAnalysis` overrides in AppView — reset when agent runs again
 - Azimuth derivation on rotation: `((180 + cumulativeRotationDeg) % 360 + 360) % 360`
+- Chat widget: text input → POST /api/chat (SSE), voice input → WS /ws/voice (stt_only) → transcript → POST /api/chat
+- Chat actions: GPT-5-mini appends `ACTION:{"action":"..."}` at end of response; frontend dispatches to AppView handlers

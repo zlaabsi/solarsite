@@ -3,7 +3,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import analyze, image_analysis, generate_3d, voice, agent
+from routers import analyze, image_analysis, generate_3d, voice, agent, chat
 
 app = FastAPI(title="SolarSite API", version="0.1.0")
 
@@ -20,6 +20,7 @@ app.include_router(image_analysis.router)
 app.include_router(generate_3d.router)
 app.include_router(voice.router)
 app.include_router(agent.router)
+app.include_router(chat.router)
 
 
 @app.get("/api/health")

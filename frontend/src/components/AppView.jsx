@@ -5,6 +5,7 @@ import useSolarAnalysis from "../hooks/useSolarAnalysis";
 import MapView from "./MapView";
 import ModelViewer from "./ModelViewer";
 import ReportPanel from "./ReportPanel";
+import ChatWidget from "./ChatWidget";
 import {
   API_URL,
   DEFAULT_LAT,
@@ -375,6 +376,20 @@ export default function AppView({ onBack }) {
       setDrawingPoints((prev) => [...prev, [lngLat.lng, lngLat.lat]]);
     }
   };
+
+  const handleChatAction = useCallback((action) => {
+    switch (action) {
+      case "run_analysis":
+        handleLaunch();
+        break;
+      case "toggle_heatmap":
+        setShowHeatmap((v) => !v);
+        break;
+      case "show_report":
+        setShowReport(true);
+        break;
+    }
+  }, []);
 
   const isRunning = agentState === "running";
   const isDone = agentState === "done";
@@ -1197,6 +1212,9 @@ export default function AppView({ onBack }) {
               })}
             </div>
           </div>
+
+          {/* ── Chat widget (bottom-right on map) ── */}
+          <ChatWidget analysisData={effectiveAnalysis} onAction={handleChatAction} />
         </div>
       </div>
 

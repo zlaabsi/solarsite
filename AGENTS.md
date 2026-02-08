@@ -112,6 +112,7 @@ Agent done → EDIT ZONE → Move/Resize/Rotate → APPLY → POST /api/analyze 
 | Purpose | Model | API |
 |---------|-------|-----|
 | Agent LLM | `gpt-5-mini` | LangGraph / langchain-openai |
+| Chat assistant | `gpt-5-mini` | Chat Completions API (streaming) |
 | Vision (terrain analysis) | `gpt-5-mini` | Responses API with reasoning |
 | Voice response gen | `gpt-5-nano` | Responses API |
 | Image generation | `gpt-image-1.5` | OpenAI Images (1536x1024, quality: low) |
@@ -131,6 +132,43 @@ All site data is derived dynamically from coordinates — no hardcoded location 
 - **Terrain**: `classify_terrain(elevation_m)` — flat_lowland/flat_plateau/elevated_terrain/highland
 - **Shadow losses**: `compute_seasonal_shadow_losses(shadow_matrix, latitude)` — hemisphere-aware seasonal calculation from actual shadow matrix
 - **Financial parameters**: Configurable via API request fields (CAPEX, OPEX, WACC, lifetime, CO2 factor) with sensible defaults
+
+## Chat Widget (Multi-Turn Conversational AI)
+
+### Architecture
+
+```
+Text input ──→ POST /api/chat (SSE) ──→ GPT-5-mini ──→ streamed tokens + action
+Voice input ──→ WS /ws/voice (stt_only) ──→ Gradium STT ──→ transcript ──→ POST /api/chat
+```
+
+### Chat Service (`chat_service.py`)
+
+- `stream_chat_response(message, history, analysis_data)` -- async generator
+- System prompt includes compact analysis data (heatmaps + panels_geojson stripped for token efficiency)
+- GPT-5-mini via **Chat Completions API** (`client.chat.completions.create(stream=True)`) -- uses Chat Completions instead of Responses API for SDK v1.59.9 compatibility
+- Yields `{"type": "token", "content": "..."}` per `chunk.choices[0].delta.content`
+- Action parsing: last line `ACTION:{"action": "run_analysis"|"toggle_heatmap"|"show_report"}` extracted and sent in `done` event
+- Fallback: non-streaming single response if stream fails
+
+### Chat Router (`routers/chat.py`)
+
+- `POST /api/chat` — SSE stream endpoint
+- Request: `{message, history[{role, content}], analysis_data?}`
+- Mirrors agent.py SSE pattern
+
+### Voice STT-Only Mode (`routers/voice.py`)
+
+- `set_mode` message: `{"type": "set_mode", "stt_only": true}`
+- When `stt_only=true`, skips GPT-5-nano response generation and TTS synthesis
+- Only returns `{"type": "transcript", "text": "..."}` events
+- Used by chat widget to get transcription without wasting GPT-5-nano calls
+
+### Frontend (`useChat.js` + `ChatWidget.jsx`)
+
+- `useChat({onAction})` — manages messages, SSE streaming, Gradium STT
+- `ChatWidget` — floating bottom-right panel (360x480px), Atlas design language
+- Actions dispatched to AppView: `run_analysis`, `toggle_heatmap`, `show_report`
 
 ## Implementation Details
 
