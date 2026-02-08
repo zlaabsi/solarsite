@@ -1,10 +1,8 @@
 fastapi>=0.115
 uvicorn>=0.34
-pvlib>=0.14
 pandas>=2.2
 numpy>=2.1
 shapely>=2.0
-scipy>=1.14
 openai>=1.59
 httpx>=0.28
 fal-client>=0.5
@@ -14,4 +12,3 @@ python-dotenv
 langgraph
 langchain-openai
 langchain-core
-timezonefinder

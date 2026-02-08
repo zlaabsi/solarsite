@@ -1,19 +1,17 @@
 import logging
 import httpx
-from timezonefinder import TimezoneFinder
 
 logger = logging.getLogger(__name__)
 
-_tf = TimezoneFinder()
-
 
 def lookup_timezone(lat: float, lon: float) -> str:
-    """Return IANA timezone string for given coordinates."""
-    tz = _tf.timezone_at(lat=lat, lng=lon)
-    if tz is None:
-        offset = round(lon / 15)
-        tz = f"Etc/GMT{-offset:+d}" if offset != 0 else "UTC"
-    return tz
+    """Return Etc/GMT±N timezone string from longitude.
+
+    Uses longitude-based UTC offset (accurate for solar calculations).
+    Replaces the 51 MB timezonefinder package to fit Vercel's 250 MB limit.
+    """
+    offset = round(lon / 15)
+    return f"Etc/GMT{-offset:+d}" if offset != 0 else "UTC"
 
 
 def classify_terrain(elevation_m: float) -> str:
